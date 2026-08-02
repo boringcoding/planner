@@ -24,10 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # включает Pages на репозитории, если он ещё не включён
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       # правила — это ворота: сайт не собирается с нарушениями геометрии
       - run: npm run check
       - run: npm run site
