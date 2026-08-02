@@ -300,11 +300,16 @@ export function renderLevel(house, L, opt = {}) {
     s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${C.paper}"/>`;
     s += `<line x1="${r.l[0][0]}" y1="${r.l[0][1]}" x2="${r.l[1][0]}" y2="${r.l[1][1]}" stroke="${C.ink}" stroke-width="${thick}"/>`;
   }
+  // шахты: стояк канализации крестом, дымоход с кружком внутри
   if (L.riser) {
     const q = L.riser;
     s += `<rect x="${q.x}" y="${q.y}" width="${q.w}" height="${q.h}" fill="none" stroke="${C.ink}" stroke-width="45"/>`;
     s += `<line x1="${q.x}" y1="${q.y}" x2="${q.x + q.w}" y2="${q.y + q.h}" stroke="${C.ink}" stroke-width="35"/>`;
     s += `<line x1="${q.x + q.w}" y1="${q.y}" x2="${q.x}" y2="${q.y + q.h}" stroke="${C.ink}" stroke-width="35"/>`;
+  }
+  for (const f of L.flues || []) {
+    s += `<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" fill="none" stroke="${C.ink}" stroke-width="45"/>`;
+    s += `<circle cx="${f.x + f.w / 2}" cy="${f.y + f.h / 2}" r="${Math.min(f.w, f.h) * 0.28}" fill="none" stroke="${C.ink}" stroke-width="35"/>`;
   }
   if (L.stair) s += stairGlyph(L.stair);
   if (showFurn) for (const f of L.furniture || []) s += furnGlyph(f);

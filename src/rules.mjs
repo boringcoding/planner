@@ -20,6 +20,7 @@ export const LIMITS = {
   carFront: 500,           // от бампера до плоскости ворот
   carRear: 700,            // от заднего бампера до стены
   riserMin: 400,           // сторона шахты канализационного стояка
+  flueMin: 400,            // сторона шахты дымохода (сэндвич d200 с разделкой)
   roomMin: 900,            // самая узкая сторона любого помещения
   quietMin: 2400,          // то же для жилой комнаты
   labelClear: 30           // допуск при проверке подписей на наложение
@@ -298,6 +299,15 @@ export function check(house, brief) {
         if (overlap(q, box(f)) > 0) E(L, `${f.l || f.t} стоит на шахте стояка`);
     } else if (rooms.some(r => r.tag === 'wet')) E(L, 'у мокрого помещения не задана шахта стояка');
 
+    // 18а. дымоходы: сквозная шахта от прибора до кровли, ничем не занятая
+    for (const f of L.flues || []) {
+      if (Math.min(f.w, f.h) < LIMITS.flueMin) E(L, `дымоход ${f.w} × ${f.h} мельче ${LIMITS.flueMin}`);
+      if (!rooms.some(r => inside(f, r))) E(L, `дымоход ${f.x},${f.y} не лежит целиком в помещении`);
+      for (const g of furn)
+        if (overlap(f, box(g)) > 0) E(L, `${g.l || g.t} стоит на дымоходе ${f.x},${f.y}`);
+      if (L.riser && overlap(f, L.riser) > 0) E(L, `дымоход ${f.x},${f.y} пересекается со стояком`);
+    }
+
     // 18б. подпись мебели влезает в свой контур
     for (const f of furn) {
       const d = furnText(f);
@@ -332,14 +342,18 @@ export function check(house, brief) {
     if (!ok) errs.push(`мокрые помещения «${a.L.title}» и «${b.L.title}» не совпадают по вертикали — потребуется второй стояк`);
   }
 
-  // 21. лестница и стояк стоят в одной шахте на всех уровнях
+  // 21. лестница, стояк и дымоходы стоят в одной шахте на всех уровнях
+  const same = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
   for (const [what, get] of [['лестницы', L => L.stair], ['стояка', L => L.riser]]) {
     const shafts = house.levels.map(get).filter(Boolean);
-    for (let i = 1; i < shafts.length; i++) {
-      const a = shafts[i - 1], b = shafts[i];
-      if (a.x !== b.x || a.y !== b.y || a.w !== b.w || a.h !== b.h)
+    for (let i = 1; i < shafts.length; i++)
+      if (!same(shafts[i - 1], shafts[i]))
         errs.push(`шахта ${what} не совпадает между уровнями ${i} и ${i + 1}`);
-    }
+  }
+  for (let i = 1; i < house.levels.length; i++) {
+    const a = house.levels[i - 1].flues || [], b = house.levels[i].flues || [];
+    if (a.length !== b.length) { errs.push(`число дымоходов расходится между уровнями ${i} и ${i + 1}`); continue; }
+    a.forEach((f, k) => { if (!same(f, b[k])) errs.push(`дымоход ${k + 1} не совпадает между уровнями ${i} и ${i + 1}`); });
   }
 
   // 23. мокрое помещение не встаёт над жилой комнатой
