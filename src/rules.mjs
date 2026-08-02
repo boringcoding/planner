@@ -1,7 +1,7 @@
 // Правила проверки планировки. Каждый найденный дефект добавляется сюда,
 // а не чинится единичной правкой координаты.
 
-import { labelBoxes, roomBlock, furnText } from './render.mjs';
+import { labelBoxes, roomBlock, furnText, textBox } from './render.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -302,16 +302,28 @@ export function check(house, brief) {
     // 18а. дымоходы: сквозная шахта от прибора до кровли, ничем не занятая
     for (const f of L.flues || []) {
       if (Math.min(f.w, f.h) < LIMITS.flueMin) E(L, `дымоход ${f.w} × ${f.h} мельче ${LIMITS.flueMin}`);
-      if (!rooms.some(r => inside(f, r))) E(L, `дымоход ${f.x},${f.y} не лежит целиком в помещении`);
+      if (f.outside) {
+        // наружный дымоход: снаружи оболочки и вплотную к ней
+        if (overlap(f, rect(0, 0, S.w, S.h)) > 0) E(L, `наружный дымоход ${f.x},${f.y} заходит внутрь дома`);
+        const touch = f.x + f.w === 0 || f.x === S.w || f.y + f.h === 0 || f.y === S.h;
+        if (!touch) E(L, `наружный дымоход ${f.x},${f.y} не примыкает к стене`);
+      } else if (!rooms.some(r => inside(f, r))) E(L, `дымоход ${f.x},${f.y} не лежит целиком в помещении`);
       for (const g of furn)
         if (overlap(f, box(g)) > 0) E(L, `${g.l || g.t} стоит на дымоходе ${f.x},${f.y}`);
       if (L.riser && overlap(f, L.riser) > 0) E(L, `дымоход ${f.x},${f.y} пересекается со стояком`);
     }
 
-    // 18б. подпись мебели влезает в свой контур
+    // 18б. подпись оборудования: влезает по ширине, лежит в своём помещении
+    // и не наезжает на соседнюю мебель
     for (const f of furn) {
       const d = furnText(f);
-      if (d && !d.fits) E(L, `подпись «${d.t}» не влезает в контур ${f.x},${f.y} — нужен другой размер или короче слово`);
+      if (!d) continue;
+      if (!d.fits) { E(L, `подпись «${d.t}» не влезает под контур ${f.x},${f.y} — короче слово или крупнее предмет`); continue; }
+      const lb = textBox(d);
+      const host = rooms.find(r => overlap(box(f), r) > 0.98 * area(box(f)));
+      if (host && !inside(lb, host)) E(L, `подпись «${d.t}» вылезает за «${host.name}»`);
+      for (const g of furn)
+        if (g !== f && overlap(shrink(lb, 15), box(g)) > 0) E(L, `подпись «${d.t}» наезжает на ${g.l || g.sym || g.t}`);
     }
 
     // 19. блок подписи помещения лежит в своём помещении и не наезжает на мебель

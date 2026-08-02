@@ -12,7 +12,8 @@ const clone = () => JSON.parse(JSON.stringify(house));
 
 const lvl = (h, id) => h.levels.find(l => l.id === id);
 const room = (h, id, name) => lvl(h, id).rooms.find(r => r.name === name);
-const furn = (h, id, l) => lvl(h, id).furniture.find(f => f.l === l);
+// ищем по подписи или по символу: подпись у самоочевидных предметов снята
+const furn = (h, id, key) => lvl(h, id).furniture.find(f => f.l === key || f.sym === key);
 
 const CASES = [
   ['помещение за оболочкой', /выходит за внутренний габарит/,
@@ -28,10 +29,10 @@ const CASES = [
     h => { lvl(h, 'cokol').openings.splice(2, 1); }],
 
   ['мебель в зоне подхода к проёму', /перекрывает зону подхода/,
-    h => { furn(h, 'cokol', 'сушка').y = 8300; }],
+    h => { furn(h, 'cokol', 'washerCol').y = 8100; }],
 
   ['высокий шкаф перед окном', /загораживает окно/,
-    h => { furn(h, 'first', 'хол.').x = 5000; }],
+    h => { furn(h, 'first', 'fridge').x = 5000; }],
 
   ['слишком крутая лестница', /подъём ступени/,
     h => { lvl(h, 'first').stair.risers = 12; }],
@@ -63,8 +64,8 @@ const CASES = [
   ['подписи листа наложились', /подписи наезжают/,
     h => { room(h, 'cokol', 'Лестница').label.y = 7300; }],
 
-  ['подпись мебели не влезает в контур', /не влезает в контур/,
-    h => { furn(h, 'cokol', 'щит').l = 'электрощит'; }],
+  ['подпись мебели не влезает в контур', /не влезает под контур/,
+    h => { furn(h, 'cokol', 'щит').l = 'вводно-распределительное'; }],
 
   ['жилая комната без окна', /без естественного света/,
     h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 900) && !(w.side === 'W' && w.a === 1800)); }],

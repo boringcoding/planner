@@ -7,7 +7,10 @@
 const C = {
   ink: '#171C24', ink60: '#6E7178', ink35: '#9A9CA1',
   paper: '#E4E3DC', room: '#FBFAF7', garage: '#E1E4E2', quiet: '#E8EDE9',
-  heat: '#C0392B', furn: 'rgba(23,28,36,0.42)', furnFill: 'rgba(23,28,36,0.055)'
+  heat: '#C0392B', furn: 'rgba(23,28,36,0.46)',
+  furnFill: 'rgba(23,28,36,0.05)',   // мебель
+  techFill: 'rgba(23,28,36,0.10)',   // техника и сантехника — чуть плотнее
+  tile: 'rgba(23,28,36,0.07)'        // сетка плитки в мокрых помещениях
 };
 
 // средняя ширина знака в долях кегля: Plex Mono моноширинный, Sans — оценка
@@ -82,20 +85,21 @@ export function roomBlock(r) {
   return { cx, cy, mode, items, box: rect(cx - w / 2, top, w, blockH) };
 }
 
-// подпись мебели: кегль ужимается под контур предмета.
-// Если и минимальный кегль не влезает — подпись не рисуется, а правило сообщает.
+// Подпись оборудования ставится под символом, а не внутри него: внутри её
+// перечёркивают собственные линии символа. Кегль ужимается под ширину;
+// если и минимальный не влезает — подпись не рисуется, а правило сообщает.
 export function furnText(f) {
   let d = null;
   if (f.t === 'c') {
     if (!f.l) return null;
-    d = { t: f.l, cx: f.x, baseline: f.y + 90, fs: 220, font: 'mono', fit: 2 * f.r - 60 };
-  } else if (f.t === 'car') {
+    d = { t: f.l, cx: f.x, baseline: f.y + (f.lup ? -f.r - 90 : f.r + 250), fs: 210, font: 'mono', fit: 2 * f.r + 600 };
+  } else if (f.sym === 'car') {
     d = { t: `${f.h} × ${f.w}`, cx: f.x + f.w / 2, baseline: f.y + f.h - 560, fs: 240, font: 'mono', fit: f.w - 440 };
-  } else if (f.t === 'bed') {
+  } else if (f.sym === 'bed') {
     d = { t: `${f.w} × ${f.h}`, cx: f.x + f.w / 2, baseline: f.y + f.h - 320, fs: 240, font: 'mono', fit: f.w - 300 };
   } else {
     if (!f.l) return null;
-    d = { t: f.l, cx: f.x + f.w / 2, baseline: f.y + f.h / 2 + 85, fs: 240, font: 'mono', fit: f.w - 130 };
+    d = { t: f.l, cx: f.x + f.w / 2, baseline: f.y + (f.lup ? -90 : f.h + 250), fs: 210, font: 'mono', fit: Math.max(f.w, 800) + 300 };
   }
   d.fs = Math.min(d.fs, Math.floor(d.fit / (d.t.length * ADV.mono)));
   d.fits = d.fs >= MIN_FURN_FS;
@@ -190,7 +194,7 @@ const t2svg = (d, fill, extra = '') =>
 // ореол под текстом должен быть цвета подложки, иначе на тонированных
 // помещениях (гараж, спальные) под подписью появляется белая клякса
 const roomFill = r => r.tag === 'garage' ? C.garage : r.tag === 'quiet' ? C.quiet : C.room;
-const halo = (fill = C.room) => ` paint-order="stroke" stroke="${fill}" stroke-width="160"`;
+const halo = (fill = C.room, w = 160) => ` paint-order="stroke" stroke="${fill}" stroke-width="${w}"`;
 
 function winRect(w, S) {
   const t = S.wall;
@@ -233,22 +237,194 @@ function stairGlyph(st) {
   return s;
 }
 
-function furnGlyph(f) {
+// ---------------------------------------------------------------------------
+// символы оборудования
+//
+// Каждый символ рисуется в местных координатах 0…lw по X и 0…lh по Y,
+// лицом к +Y. Поворот задаётся полем face и делается группой, поэтому
+// сам символ про ориентацию не знает и остаётся коротким.
+// ---------------------------------------------------------------------------
+
+const SW = { out: 30, det: 22, hair: 15 };   // контур, деталь, штриховка
+const SOFT = 130;                            // скругление мягкой мебели
+
+const R = (x, y, w, h, r = 0, extra = '') =>
+  `<rect x="${Math.round(x)}" y="${Math.round(y)}" width="${Math.round(w)}" height="${Math.round(h)}"${r ? ` rx="${Math.round(r)}"` : ''}${extra}/>`;
+const LN = (x1, y1, x2, y2, w = SW.det) =>
+  `<line x1="${Math.round(x1)}" y1="${Math.round(y1)}" x2="${Math.round(x2)}" y2="${Math.round(y2)}" stroke-width="${w}"/>`;
+const CI = (cx, cy, r, w = SW.det) =>
+  `<circle cx="${Math.round(cx)}" cy="${Math.round(cy)}" r="${Math.round(r)}" fill="none" stroke-width="${w}"/>`;
+const EL = (cx, cy, rx, ry, w = SW.det, fill = 'none') =>
+  `<ellipse cx="${Math.round(cx)}" cy="${Math.round(cy)}" rx="${Math.round(rx)}" ry="${Math.round(ry)}" fill="${fill}" stroke-width="${w}"/>`;
+
+// равномерная раскладка n линий по отрезку — полки, доски, ящики
+const combLines = (n, a, b, at) => {
   let s = '';
-  const d = furnText(f);
-  if (f.t === 'c') {
-    s += `<circle cx="${f.x}" cy="${f.y}" r="${f.r}" fill="${C.furnFill}" stroke="${C.furn}" stroke-width="28"/>`;
-    if (d && d.fits) s += t2svg(d, C.ink35);
-    return s;
-  }
-  const rx = f.t === 'car' ? 350 : f.t === 'bed' ? 80 : 0;
-  s += `<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" rx="${rx}" fill="${C.furnFill}" stroke="${C.furn}" stroke-width="30"/>`;
-  if (f.t === 'car')
-    s += `<rect x="${f.x + 220}" y="${f.y + 760}" width="${f.w - 440}" height="1350" rx="180" fill="none" stroke="${C.furn}" stroke-width="26"/>`;
-  if (f.t === 'bed')
-    s += `<line x1="${f.x}" y1="${f.y + 450}" x2="${f.x + f.w}" y2="${f.y + 450}" stroke="${C.furn}" stroke-width="26"/>`;
-  if (d && d.fits) s += t2svg(d, C.ink35);
+  for (let i = 1; i <= n; i++) s += at(a + (b - a) * i / (n + 1));
   return s;
+};
+
+const SYM = {
+  sofa: (w, h) => R(0, 0, w, h, SOFT, ` fill="${C.furnFill}"`)
+    + R(0, 0, w, h * 0.34, SOFT, ` fill="none"`)
+    + R(0, 0, w * 0.15, h, SOFT, ` fill="none"`)
+    + R(w * 0.85, 0, w * 0.15, h, SOFT, ` fill="none"`)
+    + combLines(Math.max(1, Math.round(w / 900) - 1), w * 0.15, w * 0.85,
+      x => LN(x, h * 0.34, x, h * 0.94, SW.hair)),
+
+  armchair: (w, h) => R(0, 0, w, h, SOFT, ` fill="${C.furnFill}"`)
+    + R(0, 0, w, h * 0.36, SOFT, ' fill="none"'),
+
+  bed: (w, h) => R(0, 0, w, h, 90, ` fill="${C.furnFill}"`)
+    + R(w * 0.07, h * 0.05, w * 0.4, h * 0.17, 50, ' fill="none"')
+    + (w > 1400 ? R(w * 0.53, h * 0.05, w * 0.4, h * 0.17, 50, ' fill="none"') : '')
+    + LN(0, h * 0.34, w, h * 0.34),
+
+  nightstand: (w, h) => R(0, 0, w, h, 30, ` fill="${C.furnFill}"`)
+    + LN(w * 0.25, h * 0.72, w * 0.75, h * 0.72, SW.hair),
+
+  dresser: (w, h) => R(0, 0, w, h, 20, ` fill="${C.furnFill}"`)
+    + combLines(2, 0, w, x => LN(x, 0, x, h, SW.hair))
+    + combLines(1, 0, h, y => LN(w * 0.06, y, w * 0.94, y, SW.hair)),
+
+  wardrobe: (w, h) => R(0, 0, w, h, 0, ` fill="${C.furnFill}"`)
+    + LN(w * 0.5, 0, w * 0.5, h)
+    + LN(w * 0.42, h * 0.5, w * 0.46, h * 0.5, SW.det)
+    + LN(w * 0.54, h * 0.5, w * 0.58, h * 0.5, SW.det),
+
+  // стеллаж: полки поперёк длинной стороны
+  rack: (w, h) => R(0, 0, w, h, 0, ` fill="${C.furnFill}"`)
+    + (w >= h
+      ? combLines(Math.max(1, Math.round(w / 700)), 0, w, x => LN(x, 0, x, h, SW.hair))
+      : combLines(Math.max(1, Math.round(h / 700)), 0, h, y => LN(0, y, w, y, SW.hair))),
+
+  desk: (w, h) => R(0, 0, w, h, 20, ` fill="${C.furnFill}"`)
+    + LN(0, h * 0.78, w, h * 0.78, SW.hair),
+
+  bench: (w, h) => R(0, 0, w, h, 30, ` fill="${C.furnFill}"`)
+    + combLines(2, 0, h, y => LN(0, y, w, y, SW.hair)),
+
+  // стол со стульями по длинным сторонам
+  table: (w, h) => {
+    const n = Math.max(1, Math.floor(w / 700)), cw = Math.min(460, w / n - 90), cd = 420;
+    let s = R(0, 0, w, h, 40, ` fill="${C.furnFill}"`);
+    for (let i = 0; i < n; i++) {
+      const cx = w * (i + 0.5) / n - cw / 2;
+      s += R(cx, -cd - 60, cw, cd, 60, ' fill="none"');
+      s += R(cx, h + 60, cw, cd, 60, ' fill="none"');
+    }
+    return s;
+  },
+
+  kitchen: (w, h) => R(0, 0, w, h, 0, ` fill="${C.furnFill}"`)
+    + LN(0, h * 0.82, w, h * 0.82, SW.hair)
+    + R(w * 0.08, h * 0.16, 620, h * 0.62, 60, ' fill="none"')
+    + CI(w * 0.08 + 310, h * 0.47, 55, SW.hair)
+    + combLines(1, 0, 1, () => '')
+    + [[0.42, 0.3], [0.42, 0.7], [0.56, 0.3], [0.56, 0.7]]
+      .map(([fx, fy]) => CI(w * fx, h * fy, Math.min(115, h * 0.2), SW.hair)).join('')
+    + R(w * 0.72, h * 0.14, w * 0.2, h * 0.66, 30, ' fill="none"'),
+
+  fridge: (w, h) => R(0, 0, w, h, 20, ` fill="${C.techFill}"`)
+    + LN(w * 0.86, h * 0.08, w * 0.86, h * 0.92, SW.hair)
+    + LN(w * 0.78, h * 0.36, w * 0.78, h * 0.64, SW.det),
+
+  washer: (w, h) => R(0, 0, w, h, 20, ` fill="${C.techFill}"`)
+    + CI(w / 2, h * 0.58, Math.min(w, h) * 0.29)
+    + LN(w * 0.12, h * 0.16, w * 0.88, h * 0.16, SW.hair),
+
+  washerCol: (w, h) => R(0, 0, w, h, 20, ` fill="${C.techFill}"`)
+    + LN(0, h / 2, w, h / 2, SW.det)
+    + CI(w / 2, h * 0.28, Math.min(w, h / 2) * 0.29)
+    + CI(w / 2, h * 0.78, Math.min(w, h / 2) * 0.29),
+
+  bath: (w, h) => R(0, 0, w, h, 150, ` fill="${C.techFill}"`)
+    + R(70, 70, w - 140, h - 140, 110, ' fill="none"')
+    + CI(w > h ? w - 330 : w / 2, w > h ? h / 2 : h - 330, 60, SW.hair),
+
+  shower: (w, h) => R(0, 0, w, h, 40, ` fill="${C.techFill}"`)
+    + CI(w / 2, h / 2, 70, SW.hair)
+    + LN(0, 0, w, h, SW.hair) + LN(w, 0, 0, h, SW.hair),
+
+  wc: (w, h) => R(w * 0.1, 0, w * 0.8, h * 0.26, 20, ` fill="${C.techFill}"`)
+    + EL(w / 2, h * 0.62, w * 0.4, h * 0.34, SW.out, C.techFill),
+
+  sink: (w, h) => R(0, 0, w, h, 60, ` fill="${C.techFill}"`)
+    + R(90, 110, w - 180, h - 190, 50, ' fill="none"')
+    + CI(w / 2, h * 0.16, 55, SW.hair),
+
+  boiler: (w, h) => R(0, 0, w, h, 20, ` fill="${C.techFill}"`)
+    + R(w * 0.12, h * 0.55, w * 0.76, h * 0.36, 20, ' fill="none"')
+    + LN(w * 0.12, h * 0.42, w * 0.88, h * 0.42, SW.hair),
+
+  tank: r => CI(0, 0, r, SW.out) + CI(0, 0, r * 0.62, SW.hair),
+
+  ahu: (w, h) => R(0, 0, w, h, 20, ` fill="${C.techFill}"`)
+    + CI(w * 0.28, h / 2, Math.min(w * 0.2, h * 0.32))
+    + LN(w * 0.56, h * 0.2, w * 0.92, h * 0.2, SW.hair)
+    + LN(w * 0.56, h * 0.5, w * 0.92, h * 0.5, SW.hair)
+    + LN(w * 0.56, h * 0.8, w * 0.92, h * 0.8, SW.hair),
+
+  panel: (w, h) => R(0, 0, w, h, 10, ` fill="${C.techFill}"`)
+    + combLines(2, 0, w, x => LN(x, 0, x, h, SW.hair)),
+
+  firewood: (w, h) => R(0, 0, w, h, 20, ` fill="${C.furnFill}"`)
+    + [0.18, 0.38, 0.58, 0.78].map(fx => CI(w * fx, h * 0.5, Math.min(h * 0.28, 130), SW.hair)).join(''),
+
+  benchSauna: (w, h) => R(0, 0, w, h, 20, ` fill="${C.furnFill}"`)
+    + (w >= h
+      ? combLines(Math.max(1, Math.round(h / 220)), 0, h, y => LN(0, y, w, y, SW.hair))
+      : combLines(Math.max(1, Math.round(w / 220)), 0, w, x => LN(x, 0, x, h, SW.hair))),
+
+  heaterSauna: r => CI(0, 0, r, SW.out)
+    + [[-0.36, -0.3], [0.32, -0.34], [-0.02, 0.02], [-0.4, 0.34], [0.36, 0.3]]
+      .map(([fx, fy]) => CI(r * fx, r * fy, r * 0.24, SW.hair)).join(''),
+
+  drain: r => CI(0, 0, r, SW.out) + CI(0, 0, r * 0.34, SW.hair)
+    + LN(-r * 0.72, 0, r * 0.72, 0, SW.hair) + LN(0, -r * 0.72, 0, r * 0.72, SW.hair),
+
+  tv: (w, h) => R(0, 0, w, h, 20, ` fill="${C.furnFill}"`)
+    + LN(w * 0.5, 0, w * 0.5, h, SW.hair)
+    + LN(w * 0.28, h * 0.5, w * 0.72, h * 0.5, SW.hair),
+
+  workbench: (w, h) => R(0, 0, w, h, 10, ` fill="${C.furnFill}"`)
+    + combLines(3, 0, h, y => LN(0, y, w, y, SW.hair))
+    + R(w - 380, h * 0.18, 300, h * 0.3, 20, ' fill="none"'),
+
+  machine: (w, h) => R(0, 0, w, h, 10, ` fill="${C.techFill}"`)
+    + CI(w / 2, h / 2, Math.min(w, h) * 0.26)
+    + LN(w * 0.12, h / 2, w * 0.88, h / 2, SW.hair),
+
+  // машина: капот сужается к переду (+Y), колёса по углам
+  car: (w, h) => R(0, 0, w, h, 340, ` fill="${C.furnFill}"`)
+    + R(w * 0.11, h * 0.16, w * 0.78, h * 0.42, 170, ' fill="none"')
+    + LN(w * 0.11, h * 0.58, w * 0.89, h * 0.58, SW.hair)
+    + [[0.02, 0.13], [0.02, 0.66], [0.9, 0.13], [0.9, 0.66]]
+      .map(([fx, fy]) => R(w * fx, h * fy, w * 0.08, h * 0.21, 40, ' fill="none"')).join('')
+};
+
+const FACE = { N: 0, E: 90, S: 180, W: 270 };
+
+function furnGlyph(f) {
+  const d = furnText(f);
+  const sym = f.sym || (f.t === 'c' ? 'tank' : 'rack');
+  const label = d && d.fits ? t2svg(d, C.ink35) : '';
+  const attrs = ` fill="none" stroke="${C.furn}" stroke-linejoin="round"`;
+
+  if (f.t === 'c') {
+    const draw = SYM[sym] || SYM.tank;
+    return `<g transform="translate(${f.x} ${f.y})"${attrs}>`
+      + `<circle cx="0" cy="0" r="${f.r}" fill="${sym === 'drain' ? 'none' : C.furnFill}"/>`
+      + draw(f.r) + `</g>` + label;
+  }
+
+  const deg = FACE[f.face] || 0;
+  const swap = deg % 180 !== 0;
+  const lw = swap ? f.h : f.w, lh = swap ? f.w : f.h;
+  const cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+  const draw = SYM[sym] || SYM.rack;
+  return `<g transform="rotate(${deg} ${cx} ${cy}) translate(${cx - lw / 2} ${cy - lh / 2})"${attrs}>`
+    + draw(lw, lh) + `</g>` + label;
 }
 
 function compass(cx, cy, az) {
@@ -269,7 +445,7 @@ export function renderLevel(house, L, opt = {}) {
   if (L.veranda) {
     const v = L.veranda;
     s += `<rect x="${v.x}" y="${v.y}" width="${v.w}" height="${v.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70" stroke-dasharray="260 180"/>`;
-    for (let i = 1; i <= 3; i++) s += `<line x1="${v.x + 200}" y1="${v.y + 300 * i}" x2="${v.x + v.w - 200}" y2="${v.y + 300 * i}" stroke="${C.ink35}" stroke-width="40"/>`;
+    for (let i = 1; i <= 4; i++) s += `<line x1="${v.x + 200}" y1="${v.y + v.h - 320 * i}" x2="${v.x + v.w - 200}" y2="${v.y + v.h - 320 * i}" stroke="${C.ink35}" stroke-width="40"/>`;
     for (const dy of [250, v.h / 2, v.h - 250]) s += `<rect x="${v.x + v.w - 340}" y="${v.y + dy - 170}" width="340" height="340" fill="${C.ink35}"/>`;
     const vt = verandaTexts(v);
     s += t2svg(vt[0], C.ink) + t2svg(vt[1], C.ink60) + t2svg(vt[2], C.ink35);
@@ -295,10 +471,28 @@ export function renderLevel(house, L, opt = {}) {
       if (o.fire) s += `<line x1="${o.x + o.t / 2}" y1="${o.y}" x2="${o.x + o.t / 2}" y2="${o.y + o.w}" stroke="${C.heat}" stroke-width="70"/>`;
     }
   }
+  // окно, дверь, входная дверь и ворота должны отличаться на глаз,
+  // иначе вход в дом читается как окно
   for (const w of L.windows || []) {
-    const r = winRect(w, S), thick = w.kind ? 100 : 55;
+    const r = winRect(w, S);
+    const horiz = w.side === 'S' || w.side === 'N';
+    const [[x1, y1], [x2, y2]] = r.l;
+    const off = (d) => horiz ? `x1="${x1}" y1="${y1 + d}" x2="${x2}" y2="${y2 + d}"` : `x1="${x1 + d}" y1="${y1}" x2="${x2 + d}" y2="${y2}"`;
     s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${C.paper}"/>`;
-    s += `<line x1="${r.l[0][0]}" y1="${r.l[0][1]}" x2="${r.l[1][0]}" y2="${r.l[1][1]}" stroke="${C.ink}" stroke-width="${thick}"/>`;
+    if (!w.kind) {
+      s += `<line ${off(-70)} stroke="${C.ink}" stroke-width="55"/><line ${off(70)} stroke="${C.ink}" stroke-width="55"/>`;
+    } else if (w.kind === 'gate') {
+      s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="420 220"/>`;
+    } else {
+      s += `<line ${off(0)} stroke="${C.ink}" stroke-width="${w.kind === 'entrance' ? 150 : 110}"/>`;
+      if (w.kind === 'entrance')
+        for (const e of [0, 1]) {
+          const px = horiz ? (e ? x2 : x1) : x1, py = horiz ? y1 : (e ? y2 : y1);
+          s += horiz
+            ? `<line x1="${px}" y1="${py - 200}" x2="${px}" y2="${py + 200}" stroke="${C.ink}" stroke-width="70"/>`
+            : `<line x1="${px - 200}" y1="${py}" x2="${px + 200}" y2="${py}" stroke="${C.ink}" stroke-width="70"/>`;
+        }
+    }
   }
   // шахты: стояк канализации крестом, дымоход с кружком внутри
   if (L.riser) {
