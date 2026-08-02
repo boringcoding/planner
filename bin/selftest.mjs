@@ -17,19 +17,22 @@ const furn = (h, id, key) => lvl(h, id).furniture.find(f => f.l === key || f.sym
 
 const CASES = [
   ['помещение за оболочкой', /выходит за внутренний габарит/,
-    h => { room(h, 'first', 'Тамбур').x += 500; }],
+    h => { room(h, 'first', 'Прихожая').x += 500; }],
 
   ['два помещения внахлёст', /наложение/,
     h => { room(h, 'second', 'Кабинет').x -= 400; }],
 
   ['проём мимо стены', /не лежит в стене/,
-    h => { lvl(h, 'cokol').openings[0].y += 600; }],
+    h => { lvl(h, 'cokol').openings[0].x += 600; }],
 
   ['помещение отрезано от лестницы', /не связано с лестницей/,
     h => { lvl(h, 'cokol').openings.splice(2, 1); }],
 
+  ['дверь на марше', /открывается на марш/,
+    h => { delete lvl(h, 'cokol').openings.find(o => o.kind === 'pass').kind; }],
+
   ['мебель в зоне подхода к проёму', /перекрывает зону подхода/,
-    h => { furn(h, 'cokol', 'washerCol').y = 8100; }],
+    h => { furn(h, 'cokol', 'washerCol').y = 7800; }],
 
   ['высокий шкаф перед окном', /загораживает окно/,
     h => { furn(h, 'first', 'fridge').x = 5000; }],
@@ -41,7 +44,7 @@ const CASES = [
     h => { lvl(h, 'first').furniture[1].x = lvl(h, 'first').furniture[0].x + 2000; }],
 
   ['кровать вплотную к стене', /от кровати/,
-    h => { lvl(h, 'second').furniture.find(f => f.t === 'bed' && f.w === 1800).x = 2600; }],
+    h => { lvl(h, 'second').furniture.find(f => f.sym === 'bed' && f.w === 1800).x = 2600; }],
 
   ['шахта стояка разъехалась по уровням', /шахта стояка не совпадает/,
     h => { lvl(h, 'second').riser.x += 200; }],
@@ -50,7 +53,7 @@ const CASES = [
     h => { lvl(h, 'cokol').riser.y = 7400; }],
 
   ['мокрые помещения не друг над другом', /не совпадают по вертикали|не лежит целиком в мокром/,
-    h => { room(h, 'second', 'Санузел').x = 400; }],
+    h => { room(h, 'second', 'Санузел').x = 1800; }],
 
   ['габарит разошёлся с заданием', /расходится с заданием/,
     h => { h.shell.h = 13000; }],
@@ -74,7 +77,7 @@ const CASES = [
     h => { room(h, 'second', 'Холл').w = 700; }],
 
   ['из гаража прямо в дом', /нужен тамбур/,
-    h => { room(h, 'first', 'Тамбур').tag = 'hall'; }],
+    h => { room(h, 'first', 'Прихожая').tag = 'hall'; }],
 
   ['машину убрали из гаража', /машин в гараже/,
     h => { lvl(h, 'first').furniture = lvl(h, 'first').furniture.filter(f => f.sym !== 'car' || f.x < 3000); }],

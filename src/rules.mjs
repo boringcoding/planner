@@ -209,7 +209,7 @@ export function check(house, brief) {
 
     // 12. машина по центру своей створки ворот
     const gates = wins.filter(w => w.kind === 'gate');
-    const cars = furn.filter(f => f.t === 'car');
+    const cars = furn.filter(f => f.sym === 'car');
     for (const g of gates) {
       const gc = (g.a + g.b) / 2;
       const car = cars.find(c => Math.abs(c.x + c.w / 2 - gc) < 150);
@@ -233,9 +233,22 @@ export function check(house, brief) {
       if (st.landing < (st.h - 100) / 2) E(L, `площадка ${st.landing} уже марша`);
     }
 
+    // 14. дверь не открывается на марш. Перед полотном нужен ровный пол;
+    // ступень вместо него — это падение с порога. Открытый проём (kind: 'pass')
+    // — другое дело: там нет полотна, и низ марша начинается сразу за ним
+    if (st) {
+      const run = stairRun(st);
+      for (const o of opens) {
+        if (o.kind === 'pass') continue;
+        for (const z of approachZones(o, LIMITS.doorClearance))
+          if (overlap(z, run) > 10000)
+            E(L, `проём ${o.x},${o.y} открывается на марш лестницы`);
+      }
+    }
+
     // 15. проходы вокруг кровати: к двуспальной подходят с обеих сторон
     for (const f of furn) {
-      if (f.t !== 'bed') continue;
+      if (f.sym !== 'bed') continue;
       const b = box(f);
       const room = rooms.find(r => overlap(b, r) > 0.98 * area(b));
       if (!room) continue;
