@@ -392,6 +392,36 @@ export function check(house, brief) {
           if (r.tag === 'garage' && r.h < brief.garageDepthMin)
             errs.push(`${L.title}: гараж ${r.h} мм в глубину, задание требует ${brief.garageDepthMin}`);
     }
+
+    // 24. остальные фиксированные пункты задания. Раньше проверялись только
+    // габарит и глубина гаража, а прочие пять пунктов не проверял никто:
+    // из данных можно было убрать гардеробную или машину и получить чистый прогон
+    const c = brief.checks || {};
+    const allRooms = house.levels.flatMap(L => L.rooms);
+    const allFurn = house.levels.flatMap(L => L.furniture || []);
+
+    if (c.cars) {
+      const n = allFurn.filter(f => f.sym === 'car').length;
+      if (n < c.cars) errs.push(`машин в гараже ${n}, задание требует ${c.cars}`);
+    }
+    if (c.wardrobe && !allRooms.some(r => r.tag === 'wardrobe'))
+      errs.push('задание требует гардеробную, в доме её нет');
+    for (const bad of c.forbidRooms || [])
+      if (allRooms.some(r => r.name.includes(bad)))
+        errs.push(`«${bad}» есть в доме, а задание его не предусматривает`);
+    if (c.entranceSide) {
+      const ent = house.levels.flatMap(L => L.windows || []).filter(w => w.kind === 'entrance');
+      if (!ent.length) errs.push('входной двери нет ни на одном уровне');
+      for (const w of ent)
+        if (w.side !== c.entranceSide)
+          errs.push(`вход со стороны ${w.side}, задание требует только с ${c.entranceSide} — с веранды`);
+    }
+    if (c.masterInFarHalf) {
+      const master = allRooms.find(r => r.role === 'master');
+      if (!master) errs.push('спальня хозяев не отмечена ролью master');
+      else if (master.y + master.h / 2 < S.h / 2)
+        errs.push(`спальня хозяев «${master.name}» стоит в уличной половине дома`);
+    }
   }
 
   return errs;
