@@ -220,7 +220,12 @@ export function check(house, brief) {
     // 13. лестница
     const st = L.stair;
     if (st) {
-      const rise = Math.round(L.floorToFloor / st.risers);
+      // марш связывает этот уровень со следующим, а на верхнем уровне —
+      // с предыдущим: брать floorToFloor своего этажа неверно
+      const i = house.levels.indexOf(L);
+      const other = house.levels[i + 1] || house.levels[i - 1];
+      const climb = other ? Math.abs(other.base - L.base) : L.floorToFloor;
+      const rise = Math.round(climb / st.risers);
       if (rise > LIMITS.riserMax) E(L, `подъём ступени ${rise} мм больше ${LIMITS.riserMax}`);
       if (st.tread < LIMITS.treadMin) E(L, `проступь ${st.tread} мм меньше ${LIMITS.treadMin}`);
       const flight = (Math.ceil(st.risers / 2) - 1) * st.tread;

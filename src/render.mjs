@@ -194,7 +194,8 @@ const t2svg = (d, fill, extra = '') =>
 // ореол под текстом должен быть цвета подложки, иначе на тонированных
 // помещениях (гараж, спальные) под подписью появляется белая клякса
 const roomFill = r => r.tag === 'garage' ? C.garage : r.tag === 'quiet' ? C.quiet : C.room;
-const halo = (fill = C.room, w = 160) => ` paint-order="stroke" stroke="${fill}" stroke-width="${w}"`;
+const halo = (fill = C.room, w = 160) =>
+  ` paint-order="stroke" stroke="${fill}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round"`;
 
 function winRect(w, S) {
   const t = S.wall;
