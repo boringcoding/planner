@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Планировка дома 8,0 x 13,5 м: цоколь, первый этаж с гаражом, второй этаж",
+  "description": "Планировка дома 8,0 x 12,5 м: цоколь, первый этаж с гаражом, второй этаж",
   "scripts": {
     "check": "node bin/check.mjs",
+    "selftest": "node bin/selftest.mjs",
     "build": "node bin/build.mjs",
     "shot": "node bin/shot.mjs",
     "site": "node bin/site.mjs",
-    "all": "npm run check && npm run build && npm run shot"
+    "all": "npm run check && npm run selftest && npm run build && npm run shot"
   },
   "optionalDependencies": {
     "@resvg/resvg-js": "^2.6.2"

@@ -26,6 +26,8 @@ jobs:
           node-version: 22
       # правила — это ворота: сайт не собирается с нарушениями геометрии
       - run: npm run check
+      # и сами правила тоже проверяются: каждое обязано поймать свой дефект
+      - run: npm run selftest
       - run: npm run site
       - uses: actions/upload-pages-artifact@v3
         with:
