@@ -132,15 +132,21 @@ function verandaTexts(v) {
 
 // общая раскладка листа. Поля одинаковы для всех уровней, поэтому три плана
 // выходят в одном масштабе и их можно сравнивать глазами.
+// Размеры по Y идут слева, вплотную к плану: справа место занимает веранда,
+// и цепочка, отодвинутая за неё, повисает в пустоте на листах без веранды.
+// Поля одинаковы для всех уровней, поэтому три плана выходят в одном масштабе.
 export function sheet(house, opt = {}) {
   const S = house.shell;
   const showDims = opt.dims !== false;
   const vExt = Math.max(0, ...house.levels.map(l => (l.veranda ? l.veranda.w : 0)));
-  const dx = S.w + vExt + 1350;
-  const outer = showDims ? dx + 950 : S.w + vExt;
-  const ex = outer + 800;
-  const padL = 2400, padT = 1800, padB = 2900;
-  return { S, showDims, dx, ex, padL, padT, padB, padR: ex - S.w + 900 };
+  const dx = -1250;              // цепочка размеров уровня
+  const dx2 = -2150;             // общий габарит
+  const wx = -3000;              // подпись стороны СЗ
+  const ex = S.w + vExt + 800;   // подпись стороны ЮВ — за верандой
+  return {
+    S, showDims, dx, dx2, wx, ex,
+    padL: 3900, padT: 1800, padB: 2900, padR: vExt + 1700
+  };
 }
 
 // все подписи листа одним списком — это и рисуется, и проверяется
@@ -160,12 +166,12 @@ export function labelBoxes(house, L, opt = {}) {
     for (const d of chainTexts('x', S.h + 950, L.dims.x)) add('dim', 'размер X', d);
     for (const d of chainTexts('x', S.h + 1850, [0, S.w])) add('dim', 'габарит X', d);
     for (const d of chainTexts('y', g.dx, L.dims.y)) add('dim', 'размер Y', d);
-    for (const d of chainTexts('y', g.dx + 950, [0, S.h])) add('dim', 'габарит Y', d);
+    for (const d of chainTexts('y', g.dx2, [0, S.h])) add('dim', 'габарит Y', d);
   }
   const sides = house.site.sides;
   add('side', 'ЮЗ', { t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 });
   add('side', 'СВ', { t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 });
-  add('side', 'СЗ', { t: sides.W, cx: -1350, baseline: S.h / 2 + 1200, fs: 340, font: 'mono', ls: 80, rot: -1 });
+  add('side', 'СЗ', { t: sides.W, cx: g.wx, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: -1 });
   add('side', 'ЮВ', { t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 });
   return out;
 }
@@ -317,13 +323,13 @@ export function renderLevel(house, L, opt = {}) {
     s += chain('x', S.h + 950, L.dims.x);
     s += chain('x', S.h + 1850, [0, S.w]);
     s += chain('y', g.dx, L.dims.y);
-    s += chain('y', g.dx + 950, [0, S.h]);
+    s += chain('y', g.dx2, [0, S.h]);
   }
 
-  s += compass(-1350, 1350, house.site.frontAzimuth);
+  s += compass(S.w + 1100, -900, house.site.frontAzimuth);
   s += t2svg({ t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 }, C.ink);
   s += t2svg({ t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 }, C.ink35);
-  s += t2svg({ t: sides.W, cx: -1350, baseline: S.h / 2 + 1200, fs: 340, font: 'mono', ls: 80, rot: -1 }, C.ink35);
+  s += t2svg({ t: sides.W, cx: g.wx, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: -1 }, C.ink35);
   s += t2svg({ t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 }, C.ink35);
   s += `</svg>`;
   return s;
