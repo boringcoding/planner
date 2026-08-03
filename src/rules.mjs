@@ -1,7 +1,7 @@
 // Правила проверки планировки. Каждый найденный дефект добавляется сюда,
 // а не чинится единичной правкой координаты.
 
-import { labelBoxes, roomBlock, furnText, textBox } from './render.mjs';
+import { labelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -47,7 +47,7 @@ const overlap = (a, b) => { const i = inter(a, b); return i.w > 0 && i.h > 0 ? i
 const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 const shrink = (r, m) => rect(r.x + m, r.y + m, r.w - 2 * m, r.h - 2 * m);
 const openingRect = o => o.dir === 'h' ? rect(o.x, o.y, o.w, o.t) : rect(o.x, o.y, o.t, o.w);
-const stairRun = st => rect(st.x + st.landing, st.y, st.w - st.landing, st.h);
+const stairRun = st => { const g = stairGeom(st); return rect(g.runX0, st.y, g.run, st.h); };
 
 function windowRect(win, shell) {
   const t = shell.wall, W = shell.w, H = shell.h;
@@ -275,9 +275,11 @@ export function check(house, brief) {
       const rise = Math.round(climb / st.risers);
       if (rise > LIMITS.riserMax) E(L, `подъём ступени ${rise} мм больше ${LIMITS.riserMax}`);
       if (st.tread < LIMITS.treadMin) E(L, `проступь ${st.tread} мм меньше ${LIMITS.treadMin}`);
-      const flight = (Math.ceil(st.risers / 2) - 1) * st.tread;
-      if (flight + st.landing > st.w) E(L, `марш ${flight} + площадка ${st.landing} не влезает в шахту ${st.w}`);
-      if (st.landing < (st.h - 100) / 2) E(L, `площадка ${st.landing} уже марша`);
+      // площадка — остаток шахты за маршем, а не отдельное число:
+      // держать два независимых размера значит однажды их разъехать
+      const g = stairGeom(st);
+      if (g.landing < st.landing) E(L, `площадка ${g.landing} меньше заданной ${st.landing}: марш ${g.run} не влезает в шахту ${st.w}`);
+      if (g.landing < g.width) E(L, `площадка ${g.landing} уже марша ${g.width}`);
     }
 
     // 14. дверь не открывается на марш. Перед полотном нужен ровный пол;

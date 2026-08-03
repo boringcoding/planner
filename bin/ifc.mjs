@@ -135,6 +135,66 @@ for (const [n, e] of ents) {
 }
 if (checked !== opens + holes) errs.push(`проверено проёмов ${checked} из ${opens + holes}`);
 
+// 7. Лестница ходится ногами. Ступени пишутся телами в одном представлении,
+// и разъехавшийся марш выглядит на списке сущностей ровно так же, как
+// правильный: тел столько же, объём похожий. Поэтому проверяются свойства
+// ходьбы — каждая ступень внутри шахты, высота растёт равномерно, и со
+// ступени на следующую можно шагнуть, а не перепрыгнуть через всю шахту
+const rectOf = ref => {
+  const p = arg(ent(ref).args);                       // IFCEXTRUDEDAREASOLID
+  const prof = arg(ent(p[0]).args);                   // IFCRECTANGLEPROFILEDEF
+  const pos = arg(ent(prof[2]).args);                 // IFCAXIS2PLACEMENT2D
+  const [dx, dy] = arg(ent(pos[0]).args.slice(1, -1)).map(Number);
+  return { dx, dy, w: Number(prof[3]), h: Number(prof[4]), top: Number(p[3]) };
+};
+const bodyItems = ref => {
+  const reps = arg(ent(ref).args)[2].slice(1, -1).split(',');
+  for (const r of reps) {
+    const a = arg(ent(r).args);
+    if (a[1].includes('Body')) return a[3].slice(1, -1).split(',');
+  }
+  return [];
+};
+
+for (const [n, e] of ents) {
+  if (e.type !== 'IFCSTAIR') continue;
+  const p = arg(e.args), id = p[7].replace(/'/g, '');
+  const lv = house.levels.find(L => `${L.id}.stair` === id);
+  if (!lv) { errs.push(`лестница ${id}: не нашёл уровень`); continue; }
+  const st = lv.stair, at = world(p[5]);
+  const next = house.levels[house.levels.indexOf(lv) + 1];
+  const rise = (next.base - lv.base) / st.risers;
+  const boxes = bodyItems(p[6]).map(rectOf)
+    .map(b => ({ ...b, x: at.x + b.dx - b.w / 2, y: at.y + b.dy - b.h / 2 }));
+  const steps = boxes.filter(b => b.w <= st.tread + 1);
+  const land = boxes.find(b => b.w > st.tread + 1);
+
+  if (steps.length !== st.risers - 2) errs.push(`лестница ${id}: ступеней ${steps.length}, при ${st.risers} подъёмах ждём ${st.risers - 2}`);
+  if (!land) errs.push(`лестница ${id}: нет промежуточной площадки`);
+
+  const shaft = { x: st.x, y: S.h - (st.y + st.h), w: st.w, h: st.h };
+  for (const b of boxes)
+    if (b.x < shaft.x - 1 || b.y < shaft.y - 1
+      || b.x + b.w > shaft.x + shaft.w + 1 || b.y + b.h > shaft.y + shaft.h + 1)
+      errs.push(`лестница ${id}: ступень ${Math.round(b.x)},${Math.round(b.y)} вылезает из шахты`);
+
+  // Внутри марша: та же нитка, шаг ровно в проступь, подъём ровно один.
+  // На повороте: марш меняется, а подъём двойной — потому что подъём
+  // на промежуточную площадку ступенью не считается. Всё прочее — не лестница
+  const rows = [...new Set(steps.map(b => Math.round(b.y)))];
+  if (rows.length !== 2) errs.push(`лестница ${id}: ниток ${rows.length}, а поворотная лестница — это две`);
+  let turns = 0;
+  for (let i = 1; i < steps.length; i++) {
+    const a = steps[i - 1], b = steps[i];
+    const dTop = b.top - a.top;
+    const dx = Math.abs((a.x + a.w / 2) - (b.x + b.w / 2));
+    const dy = Math.abs((a.y + a.h / 2) - (b.y + b.h / 2));
+    if (dx < 1 && dy > 1 && Math.abs(dTop - 2 * rise) < 1) { turns++; continue; }
+    if (dy > 1 || Math.abs(dx - st.tread) > 1 || Math.abs(dTop - rise) > 1)
+      errs.push(`лестница ${id}: со ступени ${i} на ${i + 1} шаг ${Math.round(dx)} × ${Math.round(dy)} мм при подъёме ${Math.round(dTop)} — так не ходят`);
+  }
+  if (turns !== 1) errs.push(`лестница ${id}: поворотов ${turns}, а марша два`);
+}
 const kb = (text.length / 1024).toFixed(0);
 if (errs.length) {
   console.log(`Файл записан, но не сходится (${errs.length}):\n`);

@@ -108,10 +108,23 @@ export function furnText(f) {
   return d;
 }
 
+// Геометрия лестницы в одном месте: план, правила и выгрузка обязаны
+// понимать её одинаково. Раньше план растягивал ступени по всей шахте,
+// а данные говорили проступь 275 — для цоколя это 314 против 275,
+// и чертёж расходился с моделью, оставаясь при этом правдоподобным.
+// Марш считается по проступи и прижимается к торцу, с которого входят;
+// площадка — то, что осталось от шахты
+export function stairGeom(st) {
+  const steps = Math.ceil(st.risers / 2) - 1;
+  const run = steps * st.tread;
+  const landing = st.w - run;
+  return { steps, run, landing, width: (st.h - 100) / 2, runX0: st.x + landing };
+}
+
 // марка лестницы садится на площадку — единственное свободное место в шахте
 export function stairText(st) {
-  const fit = st.landing - 160;
-  const d = { t: st.label, cx: st.x + st.landing / 2, baseline: st.y + 360, fs: 260, font: 'mono', fit };
+  const fit = stairGeom(st).landing - 160;
+  const d = { t: st.label, cx: st.x + stairGeom(st).landing / 2, baseline: st.y + 360, fs: 260, font: 'mono', fit };
   d.fs = Math.max(165, Math.min(d.fs, Math.floor(fit / (d.t.length * ADV.mono))));
   d.fits = fit / (d.t.length * ADV.mono) >= 165;
   return d;
@@ -266,15 +279,14 @@ function chain(kind, pos, arr) {
 
 function stairGlyph(st) {
   let s = '';
-  const run = st.w - st.landing, half = (st.h - 100) / 2;
-  const steps = Math.ceil(st.risers / 2) - 1, tread = run / steps;
+  const { steps, landing, width: half } = stairGeom(st);
   for (let i = 1; i <= steps; i++) {
-    const x = st.x + st.landing + run - i * tread;
+    const x = st.x + st.w - i * st.tread;
     s += `<line x1="${x}" y1="${st.y}" x2="${x}" y2="${st.y + half}" stroke="${C.furn}" stroke-width="28"/>`;
     s += `<line x1="${x}" y1="${st.y + half + 100}" x2="${x}" y2="${st.y + st.h}" stroke="${C.furn}" stroke-width="28"/>`;
   }
   s += `<line x1="${st.x}" y1="${st.y + half + 50}" x2="${st.x + st.w}" y2="${st.y + half + 50}" stroke="${C.furn}" stroke-width="50"/>`;
-  s += `<line x1="${st.x + st.landing}" y1="${st.y}" x2="${st.x + st.landing}" y2="${st.y + st.h}" stroke="${C.furn}" stroke-width="40" stroke-dasharray="120 100"/>`;
+  s += `<line x1="${st.x + landing}" y1="${st.y}" x2="${st.x + landing}" y2="${st.y + st.h}" stroke="${C.furn}" stroke-width="40" stroke-dasharray="120 100"/>`;
   s += t2svg(stairText(st), C.ink60, halo());
   return s;
 }
