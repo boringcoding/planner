@@ -13,7 +13,8 @@
     "shot": "node bin/shot.mjs",
     "site": "node bin/site.mjs",
     "all": "npm run check && npm run selftest && npm run build && npm run ifc && npm run shot",
-    "ifc": "node bin/ifc.mjs"
+    "ifc": "node bin/ifc.mjs",
+    "cost": "node bin/cost.mjs"
   },
   "optionalDependencies": {
     "@resvg/resvg-js": "^2.6.2"
