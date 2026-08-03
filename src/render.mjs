@@ -1,3 +1,5 @@
+import { face as mFace } from './model.mjs';
+
 // Отрисовка плана этажа в SVG. Единицы — миллиметры, viewBox тоже в мм.
 //
 // Геометрия подписей считается здесь и экспортируется наружу: rules.mjs берёт
@@ -149,9 +151,29 @@ export function sheet(house, opt = {}) {
   const ex = S.w + vExt + 800;   // подпись стороны ЮВ — за верандой
   return {
     S, showDims, dx, dx2, wx, ex,
-    padL: 3900, padT: 1800, padB: 2900, padR: vExt + 1700
+    legendY: S.h + 3050,          // полоса условных обозначений и масштаба
+    padL: 3900, padT: 1800, padB: 4800, padR: vExt + 1700
   };
 }
+
+// Условные обозначения собираются по тому, что на листе есть: легенда с
+// пунктом, которого на чертеже нет, врёт не меньше, чем отсутствующая
+export function legendItems(house, L) {
+  const out = [];
+  if ((L.walls || []).some(w => w.fire) || (L.openings || []).some(o => o.fire))
+    out.push({ sym: 'fire', t: 'противопожарная преграда' });
+  if (L.riser) out.push({ sym: 'riser', t: 'стояк канализации' });
+  if ((L.ducts || []).length) out.push({ sym: 'duct', t: 'вентшахта' });
+  if ((L.flues || []).length) out.push({ sym: 'flue', t: 'дымоход' });
+  return out;
+}
+
+// две колонки по два пункта: длинный пункт в узкую колонку не влезает,
+// а правило о наложении подписей ловит это сразу
+const legendText = (g, i) => ({
+  t: legendItems.list[i].t, cx: 700 + (i % 2) * 4200,
+  baseline: g.legendY + Math.floor(i / 2) * 520, fs: 220, font: 'mono'
+});
 
 // все подписи листа одним списком — это и рисуется, и проверяется
 export function labelBoxes(house, L, opt = {}) {
@@ -172,6 +194,13 @@ export function labelBoxes(house, L, opt = {}) {
     for (const d of chainTexts('y', g.dx, L.dims.y)) add('dim', 'размер Y', d);
     for (const d of chainTexts('y', g.dx2, [0, S.h])) add('dim', 'габарит Y', d);
   }
+  const items = legendItems(house, L);
+  legendItems.list = items;
+  items.forEach((it, i) => {
+    const d = legendText(g, i);
+    const b = textBox(d);
+    out.push({ kind: 'legend', owner: it.t, x: b.x - 600, y: b.y, w: b.w + 600, h: b.h });
+  });
   const sides = house.site.sides;
   add('side', 'ЮЗ', { t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 });
   add('side', 'СВ', { t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 });
@@ -428,6 +457,43 @@ function furnGlyph(f) {
     + draw(lw, lh) + `</g>` + label;
 }
 
+// Масштабная линейка: по ней чертёж читается в любом размере — на экране,
+// в печати и на скриншоте, где никакого «1:50» уже нет
+function scaleBar(x, y) {
+  const unit = 1000, n = 3, h = 130;
+  let s = '';
+  for (let i = 0; i < n; i++)
+    s += `<rect x="${x + i * unit}" y="${y}" width="${unit}" height="${h}" fill="${i % 2 ? C.paper : C.ink60}" stroke="${C.ink60}" stroke-width="30"/>`;
+  for (let i = 0; i <= n; i++)
+    s += t2svg({ t: String(i), cx: x + i * unit, baseline: y - 130, fs: 240, font: 'mono' }, C.ink60);
+  return s + t2svg({ t: 'м', cx: x + n * unit + 350, baseline: y - 130, fs: 240, font: 'mono' }, C.ink35);
+}
+
+// значок условного обозначения — тот же, что на чертеже, только мельче
+function legendGlyph(sym, x, y) {
+  const r = 190;
+  if (sym === 'fire') return `<rect x="${x - r}" y="${y - r * 0.62}" width="${2 * r}" height="${r * 1.24}" fill="none" stroke="${C.heat}" stroke-width="60"/>`;
+  const b = `<rect x="${x - r}" y="${y - r}" width="${2 * r}" height="${2 * r}" fill="none" stroke="${C.ink}" stroke-width="45"/>`;
+  if (sym === 'riser') return b
+    + `<line x1="${x - r}" y1="${y - r}" x2="${x + r}" y2="${y + r}" stroke="${C.ink}" stroke-width="35"/>`
+    + `<line x1="${x + r}" y1="${y - r}" x2="${x - r}" y2="${y + r}" stroke="${C.ink}" stroke-width="35"/>`;
+  if (sym === 'flue') return b + `<circle cx="${x}" cy="${y}" r="${r * 0.56}" fill="none" stroke="${C.ink}" stroke-width="35"/>`;
+  return b + `<line x1="${x}" y1="${y + r * 0.6}" x2="${x}" y2="${y - r * 0.6}" stroke="${C.ink}" stroke-width="35"/>`
+    + `<path d="M${x - r * 0.36} ${y - r * 0.21} L${x} ${y - r * 0.6} L${x + r * 0.36} ${y - r * 0.21}" fill="none" stroke="${C.ink}" stroke-width="35"/>`;
+}
+
+function legend(house, L, g) {
+  const items = legendItems(house, L);
+  legendItems.list = items;
+  let s = '';
+  items.forEach((it, i) => {
+    const d = legendText(g, i);
+    s += legendGlyph(it.sym, d.cx - 400, d.baseline - 80);
+    s += t2svg(d, C.ink60).replace('text-anchor="middle"', 'text-anchor="start"');
+  });
+  return s;
+}
+
 function compass(cx, cy, az) {
   const a = az * Math.PI / 180, r = 620;
   const nx = cx + r * Math.sin(a), ny = cy - r * Math.cos(a);
@@ -458,6 +524,15 @@ export function renderLevel(house, L, opt = {}) {
   for (const r of L.rooms) {
     const fill = r.tag === 'garage' ? C.garage : r.tag === 'quiet' ? C.quiet : null;
     if (fill) s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${fill}"/>`;
+  }
+  // сетка плитки: мокрое помещение видно на плане само, без подписи
+  for (const r of L.rooms) {
+    if (r.tag !== 'wet') continue;
+    const step = 300;
+    for (let x = r.x + step; x < r.x + r.w; x += step)
+      s += `<line x1="${x}" y1="${r.y}" x2="${x}" y2="${r.y + r.h}" stroke="${C.tile}" stroke-width="25"/>`;
+    for (let y = r.y + step; y < r.y + r.h; y += step)
+      s += `<line x1="${r.x}" y1="${y}" x2="${r.x + r.w}" y2="${y}" stroke="${C.tile}" stroke-width="25"/>`;
   }
   for (const w of L.walls) {
     s += `<rect x="${w.x}" y="${w.y}" width="${w.w}" height="${w.h}" fill="${C.ink}"/>`;
@@ -506,9 +581,23 @@ export function renderLevel(house, L, opt = {}) {
     s += `<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" fill="none" stroke="${C.ink}" stroke-width="45"/>`;
     s += `<circle cx="${f.x + f.w / 2}" cy="${f.y + f.h / 2}" r="${Math.min(f.w, f.h) * 0.28}" fill="none" stroke="${C.ink}" stroke-width="35"/>`;
   }
+  // вентшахта — тот же квадрат, но со стрелкой потока
+  for (const d of L.ducts || []) {
+    const cx = d.x + d.w / 2, cy = d.y + d.h / 2, r = Math.min(d.w, d.h) * 0.3;
+    s += `<rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" fill="none" stroke="${C.ink}" stroke-width="45"/>`;
+    s += `<line x1="${cx}" y1="${cy + r}" x2="${cx}" y2="${cy - r}" stroke="${C.ink}" stroke-width="35"/>`;
+    s += `<path d="M${cx - r * 0.6} ${cy - r * 0.35} L${cx} ${cy - r} L${cx + r * 0.6} ${cy - r * 0.35}" fill="none" stroke="${C.ink}" stroke-width="35"/>`;
+  }
   if (L.stair) s += stairGlyph(L.stair);
-  if (showFurn) for (const f of L.furniture || []) s += furnGlyph(f);
+  if (showFurn) {
+    const g0 = opt.pale ? `<g opacity="${opt.pale}">` : '';
+    s += g0;
+    for (const f of L.furniture || []) s += furnGlyph(f);
+    if (g0) s += '</g>';
+  }
+  if (opt.overlay) s += opt.overlay;
 
+  if (opt.pale) s += `<g opacity="0.5">`;
   for (const r of L.rooms) {
     const fill = roomFill(r);
     for (const d of roomBlock(r).items) {
@@ -518,6 +607,7 @@ export function renderLevel(house, L, opt = {}) {
       } else s += t2svg(d, d.kind === 'area' ? C.ink60 : C.ink, halo(fill));
     }
   }
+  if (opt.pale) s += `</g>`;
 
   if (g.showDims) {
     s += chain('x', S.h + 950, L.dims.x);
@@ -526,6 +616,9 @@ export function renderLevel(house, L, opt = {}) {
     s += chain('y', g.dx2, [0, S.h]);
   }
 
+  s += scaleBar(0, g.legendY + 1150);
+  s += legend(house, L, g);
+
   s += compass(S.w + 1100, -900, house.site.frontAzimuth);
   s += t2svg({ t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 }, C.ink);
   s += t2svg({ t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 }, C.ink35);
@@ -533,6 +626,100 @@ export function renderLevel(house, L, opt = {}) {
   s += t2svg({ t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 }, C.ink35);
   s += `</svg>`;
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// планы по разделам: тот же этаж бледнее, поверх — точки и посчитанные трассы
+// ---------------------------------------------------------------------------
+
+export const SYS_C = { eom: '#A8762A', vk: '#2E6C8C', ov: '#B3402F', ss: '#41785C' };
+
+const GLYPH = {
+  socket: 'Р', socketIP: 'Р+', power: '3Ф', light: 'С', switch: 'В',
+  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', supply: 'П', exhaust: 'ВЫ',
+  data: 'RJ', tv: 'ТВ', rack: 'Ш', leak: 'ПР', smoke: 'ДЫ'
+};
+
+// метка точки: пилюля по ширине глифа, чтобы двухбуквенные не вылезали
+function pill(x, y, t, color, scale = 1) {
+  const h = 360 * scale, w = Math.max(h, (t.length * 150 + 180) * scale), r = h / 2;
+  return `<rect x="${Math.round(x - w / 2)}" y="${Math.round(y - h / 2)}" width="${Math.round(w)}" height="${Math.round(h)}" rx="${Math.round(r)}"`
+    + ` fill="${C.room}" stroke="${color}" stroke-width="${Math.round(46 * scale)}"/>`
+    + t2svg({ t, cx: x, baseline: y + 92 * scale, fs: Math.round(230 * scale), font: 'mono' }, color);
+}
+
+const poly = (pts, color, dash) =>
+  `<polyline points="${pts.map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ')}" fill="none"`
+  + ` stroke="${color}" stroke-width="55" stroke-linejoin="round" stroke-linecap="round" opacity="0.55"`
+  + (dash ? ` stroke-dasharray="${dash}"` : '') + '/>';
+
+export function renderSystem(house, L, sys, bill) {
+  const color = SYS_C[sys.id] || C.ink, S = house.shell;
+  const here = p => p.level === L.id;
+  const drawn = [];
+  let ov = '';
+
+  // магистраль видна на листе источника: там она и проложена, дальше — стояк
+  if (sys.source.level === L.id && bill.trunks.length) ov += poly(bill.trunks[0].via, color, '300 200');
+  for (const r of bill.runs) {
+    if (r.level.id !== L.id) continue;
+    for (const v of r.via) ov += poly(v, color);
+  }
+
+  // этажный узел
+  const n = sys.source.level === L.id ? sys.source : sys.vertical;
+  ov += `<rect x="${n.x - 260}" y="${n.y - 260}" width="520" height="520" fill="${C.room}" stroke="${color}" stroke-width="70"/>`;
+  ov += t2svg({ t: sys.source.level === L.id ? '⌁' : '↕', cx: n.x, baseline: n.y + 120, fs: 340, font: 'mono' }, color);
+
+  for (const p of sys.points) {
+    if (!here(p)) continue;
+    const at = sysPlace(house, p);
+    if (!at) continue;
+    if (p.kind === 'radiator' && at.face) {
+      const f = at.face, a = f.at(p.along - p.len / 2), b = f.at(p.along + p.len / 2);
+      const dx = f.axis === 'x' ? 0 : 1, dy = f.axis === 'x' ? 1 : 0;
+      const d = 180 * f.out * -1;
+      ov += `<rect x="${Math.min(a.x, b.x) + (dx ? d - 90 : 0)}" y="${Math.min(a.y, b.y) + (dy ? d - 90 : 0)}"`
+        + ` width="${Math.abs(b.x - a.x) + (dx ? 180 : 0)}" height="${Math.abs(b.y - a.y) + (dy ? 180 : 0)}"`
+        + ` fill="${C.room}" stroke="${color}" stroke-width="55"/>`;
+      continue;
+    }
+    // метки, попавшие в одну точку плана (решётка над радиатором, розетка
+    // под выключателем), раздвигаются от стены: иначе одна прячет другую
+    const stack = drawn.filter(q => Math.hypot(q.x - at.x, q.y - at.y) < 300).length;
+    const off = (at.face ? 240 : 0) + stack * 420;
+    const px = at.x - (at.face && at.face.axis === 'y' ? at.face.out * off : 0);
+    const py = at.y - (at.face && at.face.axis === 'x' ? at.face.out * off : -stack * 420);
+    drawn.push({ x: at.x, y: at.y });
+    ov += pill(px, py, GLYPH[p.kind] || '?', color, 0.78);
+  }
+
+  // легенда под планом, на месте размерных цепочек
+  const used = bill.devices.filter(d => d.n);
+  const cols = 2, rowH = 440, colW = (S.w - 400) / cols;
+  used.forEach((d, i) => {
+    const cx = 400 + (i % cols) * colW, cy = S.h + 900 + Math.floor(i / cols) * rowH;
+    ov += pill(cx, cy, GLYPH[d.kind] || '?', color, 0.8);
+    ov += t2svg({ t: `${d.l} · ${d.n}`, cx: cx + 340, baseline: cy + 90, fs: 250, font: 'mono' }, C.ink60)
+      .replace('text-anchor="middle"', 'text-anchor="start"');
+  });
+  ov += t2svg({ t: sys.title, cx: S.w / 2, baseline: S.h + 500, fs: 320 }, C.ink);
+
+  // подпись помещения ужимается до номера: имя и площадь есть в экспликации,
+  // а место на листе нужно точкам раздела
+  const numbered = { ...L, rooms: L.rooms.map(r => ({ ...r, label: { ...(r.label || {}), mode: 'num' } })) };
+  return renderLevel(house, numbered, { dims: false, pale: 0.3, overlay: ov });
+}
+
+// координаты точки для отрисовки — тот же расчёт, что в systems.mjs
+function sysPlace(house, p) {
+  const L = house.levels.find(l => l.id === p.level);
+  if (!L) return null;
+  if (p.x != null) return { x: p.x, y: p.y };
+  const room = L.rooms.find(r => r.id === p.room);
+  if (!room) return null;
+  const f = mFace(room, p.side);
+  return { ...f.at(Math.max(0, Math.min(f.len, p.along))), face: f };
 }
 
 export function explication(L) {

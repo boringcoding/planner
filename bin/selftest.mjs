@@ -4,11 +4,18 @@
 
 import fs from 'node:fs';
 import { check } from '../src/rules.mjs';
+import { checkSystems } from '../src/sysrules.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
 const brief = read('brief.json');
+const sysd = read('systems.json');
 const clone = () => JSON.parse(JSON.stringify(house));
+const cloneS = () => JSON.parse(JSON.stringify(sysd));
+
+const sys = (d, id) => d.systems.find(s => s.id === id);
+const pt = (d, id) => d.systems.flatMap(s => s.points).find(p => p.id === id);
+const kind = (d, sid, k) => sys(d, sid).points.find(p => p.kind === k);
 
 const lvl = (h, id) => h.levels.find(l => l.id === id);
 const room = (h, id, name) => lvl(h, id).rooms.find(r => r.name === name);
@@ -100,6 +107,12 @@ const CASES = [
   ['помещение залезло на стену', /налезает на стену/,
     h => { room(h, 'first', 'Гараж').h += 250; }],
 
+  ['мебель встала на вентшахту', /стоит на вентшахте/,
+    h => { lvl(h, 'cokol').furniture.find(f => f.l === 'стеллаж').y = 6000; }],
+
+  ['вентшахта разъехалась по уровням', /вентшахт\) не совпадает/,
+    h => { lvl(h, 'second').ducts[0].x += 300; }],
+
   ['элемент без идентификатора', /без идентификатора/,
     h => { delete lvl(h, 'first').walls[0].id; }],
 
@@ -117,6 +130,73 @@ const CASES = [
 
   ['жилая комната с щелью вместо окна', /остекление/,
     h => { lvl(h, 'second').windows.forEach(w => { if (!w.kind) w.hz = 300; }); }],
+];
+
+// правила разделов: ломается data/systems.json, дом остаётся прежним
+const SCASES = [
+  ['точка вне помещения', /нет помещения/,
+    d => { kind(d, 'eom', 'socket').room = 'first.r9'; }],
+
+  ['розетка съехала за грань', /вылезает за грань/,
+    d => { kind(d, 'eom', 'socket').along = 99000; }],
+
+  ['розетка в дверном проёме', /попадает в проём/,
+    d => { const p = sys(d, 'eom').points.find(x => x.id === 'eom.p60'); p.side = 'S'; p.along = 950; }],
+
+  ['розетка под потолком', /розетка на отметке/,
+    d => { kind(d, 'eom', 'socket').z = 2400; }],
+
+  ['выключатель посреди стены', /выключатель не у проёма/,
+    d => { const p = sys(d, 'eom').points.find(x => x.room === 'second.r7' && x.kind === 'switch');
+           p.side = 'N'; p.along = 2500; p.z = 900; }],
+
+  ['выключатель на уровне пола', /выключатель на отметке/,
+    d => { kind(d, 'eom', 'switch').z = 300; }],
+
+  ['в мокром помещении обычная розетка', /должна быть IP44/,
+    d => { kind(d, 'eom', 'socketIP').kind = 'socket'; }],
+
+  ['розетка в зоне брызг', /до «bath»|до «shower»/,
+    d => { const p = sys(d, 'eom').points.find(x => x.room === 'second.r4' && x.kind === 'socketIP'); p.side = 'W'; p.along = 400; }],
+
+  ['радиатор не под окном', /радиатор не под окном/,
+    d => { kind(d, 'ov', 'radiator').along = 200; }],
+
+  ['радиатор шире окна', /длиннее окна/,
+    d => { kind(d, 'ov', 'radiator').len = 4000; }],
+
+  ['радиатор за мебелью', /радиатор перекрыт мебелью/,
+    d => { const p = sys(d, 'ov').points.find(x => x.room === 'first.r5' && x.kind === 'radiator');
+           p.side = 'N'; p.along = 5600; p.len = 1400; }],
+
+  ['помещение осталось без света', /без светильника/,
+    d => { const s = sys(d, 'eom'); s.points = s.points.filter(p => !(p.kind === 'light' && p.room === 'second.r7')); }],
+
+  ['санузел без вытяжки', /без вытяжки/,
+    d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'exhaust' && p.room === 'second.r4')); }],
+
+  ['спальня без притока', /без притока/,
+    d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'supply' && p.room === 'second.r7')); }],
+
+  ['помещение без извещателя', /без пожарного извещателя/,
+    d => { const s = sys(d, 'ss'); s.points = s.points.filter(p => !(p.kind === 'smoke' && p.room === 'first.r1')); }],
+
+  ['прибор без подводки', /без подводки/,
+    d => { const s = sys(d, 'vk'); s.points = s.points.filter(p => p.host !== 'second.f11'); }],
+
+  ['стояк системы вне стены', /не попадает ни в стену/,
+    d => { sys(d, 'ss').vertical = { x: 1200, y: 3000 }; }],
+
+  ['две точки в одном месте', /стоят ближе/,
+    d => { const s = sys(d, 'eom').points.filter(p => p.room === 'second.r7' && p.kind === 'socket');
+           s[1].side = s[0].side; s[1].along = s[0].along + 100; s[1].z = s[0].z; }],
+
+  ['точка на подписи помещения', /попадает в подпись/,
+    d => { const p = kind(d, 'ss', 'smoke'); const r = house.levels[0].rooms.find(x => x.id === p.room);
+           p.x = r.label.x; p.y = r.label.y; }],
+
+  ['идентификатор точки повторился', /повторяется/,
+    d => { const s = sys(d, 'eom').points; s[1].id = s[0].id; }]
 ];
 
 const base = check(house, brief);
@@ -140,8 +220,28 @@ for (const [name, expect, mutate] of CASES) {
   }
 }
 
-if (bad) {
-  console.log(`Правил, которые не сработали: ${bad} из ${CASES.length}.`);
+const sbase = checkSystems(house, sysd);
+if (sbase.length) {
+  console.log('Разделы уже нарушают правила — сначала почини их:\n');
+  sbase.forEach((e, i) => console.log(`${String(i + 1).padStart(2)}. ${e}`));
   process.exit(1);
 }
-console.log(`Все ${CASES.length} правил ловят свой дефект.`);
+
+for (const [name, expect, mutate] of SCASES) {
+  const d = cloneS();
+  mutate(d);
+  const errs = checkSystems(house, d);
+  if (!errs.some(e => expect.test(e))) {
+    bad++;
+    console.log(`НЕ ПОЙМАНО: ${name}`);
+    console.log(`   ждали: ${expect}`);
+    console.log(`   получили: ${errs.length ? errs.slice(0, 3).join(' | ') : 'ни одного нарушения'}\n`);
+  }
+}
+
+const all = CASES.length + SCASES.length;
+if (bad) {
+  console.log(`Правил, которые не сработали: ${bad} из ${all}.`);
+  process.exit(1);
+}
+console.log(`Все ${all} правил ловят свой дефект: ${CASES.length} по плану, ${SCASES.length} по разделам.`);

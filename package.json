@@ -9,6 +9,7 @@
     "selftest": "node bin/selftest.mjs",
     "build": "node bin/build.mjs",
     "guard": "node bin/guard.mjs",
+    "points": "node bin/genpoints.mjs",
     "shot": "node bin/shot.mjs",
     "site": "node bin/site.mjs",
     "all": "npm run check && npm run selftest && npm run build && npm run shot"

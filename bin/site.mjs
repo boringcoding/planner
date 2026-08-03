@@ -2,11 +2,14 @@
 // Как и всё остальное, выводится из data/house.json — площади не хранятся, а считаются.
 
 import fs from 'node:fs';
-import { renderLevel, explication } from '../src/render.mjs';
+import { renderLevel, renderSystem, explication } from '../src/render.mjs';
+import { renderElevation, elevationRooms } from '../src/elev.mjs';
+import { bill } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
 const brief = read('brief.json');
+const systems = read('systems.json').systems;
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const m2 = v => v.toFixed(1).replace('.', ',');
@@ -17,6 +20,9 @@ const levels = house.levels.map(L => {
   return { L, e, svg: renderLevel(house, L) };
 });
 
+const bills = systems.map(sys => ({ sys, b: bill(house, sys) }));
+const elevs = house.levels.flatMap(L => elevationRooms(L).map(r => ({ L, r, svg: renderElevation(house, L, r, systems) })));
+
 const totalUseful = levels.reduce((s, { e }) => s + e.total, 0);
 const footprint = house.shell.w * house.shell.h / 1e6;
 
@@ -25,11 +31,13 @@ const facts = [
   ['Пятно застройки', `${m2(footprint)} м²`],
   ['Габарит', `${m2(house.shell.w / 1000)} × ${m2(house.shell.h / 1000)} м`],
   ['Уровней', String(house.levels.length)],
+  ['Точек по разделам', String(systems.reduce((n, s) => n + s.points.length, 0))],
+  ['Трасс', `${Math.round(bills.reduce((n, { b }) => n + b.total, 0))} м`],
 ];
 
-const nav = levels
-  .map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`)
-  .join('');
+const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
+  + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.id.toUpperCase())}</a>`).join('')
+  + '<a href="#elev">Развёртки</a>';
 
 const sheets = levels.map(({ L, e, svg }) => `
     <section class="sheet" id="${slug(L.id)}">
@@ -47,6 +55,36 @@ const sheets = levels.map(({ L, e, svg }) => `
         <tfoot><tr><td></td><td>Итого полезной</td><td class="num">${m2(e.total)} м²</td></tr></tfoot>
       </table>
     </section>`).join('\n');
+
+const sysSections = bills.map(({ sys, b }) => `
+    <section class="sheet" id="${slug(sys.id)}">
+      <div class="sheet-head">
+        <h2>${esc(sys.title)}</h2>
+        <p class="meta">${esc(sys.note)}</p>
+      </div>
+      ${house.levels.map(L => `<figure class="plan">${renderSystem(house, L, sys, b)}</figure>`).join('\n      ')}
+      <table class="expl">
+        <caption>Ведомость: оборудование</caption>
+        <thead><tr><th>Что</th><th>Кол-во</th></tr></thead>
+        <tbody>${b.devices.map(d => `<tr><td>${esc(d.l || d.kind)}</td><td class="num">${d.n}</td></tr>`).join('')}</tbody>
+      </table>
+      <table class="expl">
+        <caption>Ведомость: трассы</caption>
+        <thead><tr><th>Материал</th><th>Длина</th></tr></thead>
+        <tbody>${b.materials.map(m => `<tr><td>${esc(m.mat)}</td><td class="num">${m2(m.m)} м</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td>Итого с запасом ${Math.round((1.12 - 1) * 100)} %</td><td class="num">${m2(b.total)} м</td></tr></tfoot>
+      </table>
+    </section>`).join('\n');
+
+const elevSection = `
+    <section class="sheet" id="elev">
+      <div class="sheet-head">
+        <h2>Развёртки</h2>
+        <p class="meta">Четыре грани помещения подряд: юго-запад, юго-восток, северо-восток, северо-запад.
+          Точки всех разделов на одном листе — затем развёртка и нужна.</p>
+      </div>
+      ${elevs.map(({ L, r, svg }) => `<figure class="plan elev"><figcaption>${esc(r.name)} · ${esc(L.title.toLowerCase())}</figcaption>${svg}</figure>`).join('\n      ')}
+    </section>`;
 
 const html = `<!doctype html>
 <html lang="ru">
@@ -87,6 +125,9 @@ const html = `<!doctype html>
   .meta { margin: 4px 0 0; color: var(--ink60); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 14px; }
   .plan { margin: 24px 0 0; background: #E4E3DC; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
   .plan svg { display: block; width: 100%; height: auto; }
+  .plan + .plan { margin-top: 16px; }
+  .elev figcaption { font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase;
+                     color: var(--ink35); padding: 10px 14px 0; }
   table.expl { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 15px; }
   table.expl caption { text-align: left; font-size: 12px; letter-spacing: 0.09em;
                        text-transform: uppercase; color: var(--ink35); padding-bottom: 8px; }
@@ -129,6 +170,8 @@ const html = `<!doctype html>
 
   <nav>${nav}<a href="#brief">Задание</a></nav>
 ${sheets}
+${sysSections}
+${elevSection}
 
   <section class="brief" id="brief">
     <h2>Задание</h2>
@@ -152,4 +195,7 @@ fs.mkdirSync('site', { recursive: true });
 fs.writeFileSync('site/index.html', html);
 fs.writeFileSync('site/.nojekyll', '');
 for (const { L, svg } of levels) fs.writeFileSync(`site/${L.id}.svg`, svg);
-console.log(`site/index.html + ${levels.length} SVG`);
+for (const { sys, b } of bills)
+  for (const L of house.levels) fs.writeFileSync(`site/${sys.id}-${L.id}.svg`, renderSystem(house, L, sys, b));
+for (const { r, svg } of elevs) fs.writeFileSync(`site/elev-${r.id}.svg`, svg);
+console.log(`site/index.html + ${levels.length + bills.length * house.levels.length + elevs.length} SVG`);
