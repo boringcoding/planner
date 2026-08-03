@@ -99,13 +99,19 @@ export function ifc(house, systems = [], opt = {}) {
   const org = E('IFCORGANIZATION', ['$', str('planner'), '$', '$', '$']);
   const po = E('IFCPERSONANDORGANIZATION', [person, org, '$']);
   const app = E('IFCAPPLICATION', [org, str('0.1'), str('planner'), str('planner')]);
-  const owner = E('IFCOWNERHISTORY', [po, app, '$', '.ADDED.', '$', '$', '$', '0']);
+  const owner = E('IFCOWNERHISTORY', [po, app, '$', '.NOCHANGE.', '$', '$', '$', '0']);
 
   const P0 = E('IFCCARTESIANPOINT', [L(['0.', '0.', '0.'])]);
   const DZ = E('IFCDIRECTION', [L(['0.', '0.', '1.'])]);
   const DX = E('IFCDIRECTION', [L(['1.', '0.', '0.'])]);
   const AX0 = E('IFCAXIS2PLACEMENT3D', [P0, DZ, DX]);
-  const ctx = E('IFCGEOMETRICREPRESENTATIONCONTEXT', ['$', str('Model'), '3', '1.E-05', AX0, '$']);
+  // Север. Азимут фронта — 235°, фронт смотрит на юго-запад; после отражения
+  // Y плановый «низ» становится севером модели. TrueNorth — направление
+  // севера в осях модели, иначе дом приезжает без связи со сторонами света
+  const az = (house.site && house.site.frontAzimuth) || 0;
+  const north = (az + 180) * Math.PI / 180;
+  const trueNorth = E('IFCDIRECTION', [L([num(Math.sin(north)), num(Math.cos(north))])]);
+  const ctx = E('IFCGEOMETRICREPRESENTATIONCONTEXT', ['$', str('Model'), '3', '1.E-05', AX0, trueNorth]);
   const sub = E('IFCGEOMETRICREPRESENTATIONSUBCONTEXT', [str('Body'), str('Model'), '*', '*', '*', '*', ctx, '$', '.MODEL_VIEW.', '$']);
   const subAxis = E('IFCGEOMETRICREPRESENTATIONSUBCONTEXT', [str('Axis'), str('Model'), '*', '*', '*', '*', ctx, '$', '.GRAPH_VIEW.', '$']);
   const units = E('IFCUNITASSIGNMENT', [L([
@@ -126,8 +132,13 @@ export function ifc(house, systems = [], opt = {}) {
   // точка и оси в координатах этажа
   const pt3 = (x, y, z) => E('IFCCARTESIANPOINT', [L([num(x), num(y), num(z)])]);
   const dir3 = (x, y, z) => E('IFCDIRECTION', [L([num(x), num(y), num(z)])]);
+  // Ось и направление задаются вместе или не задаются вовсе: правило
+  // IfcAxis2Placement3D.AxisAndRefDirProvision запрещает половину пары,
+  // и валидатор ловит это 358 раз подряд
   const place = (rel, x, y, z, ref) => {
-    const ax = E('IFCAXIS2PLACEMENT3D', [pt3(x, y, z), DZ, ref ? dir3(ref[0], ref[1], 0) : '$']);
+    const ax = E('IFCAXIS2PLACEMENT3D', ref
+      ? [pt3(x, y, z), DZ, dir3(ref[0], ref[1], 0)]
+      : [pt3(x, y, z), '$', '$']);
     return E('IFCLOCALPLACEMENT', [rel, ax]);
   };
 
@@ -185,10 +196,13 @@ export function ifc(house, systems = [], opt = {}) {
       ])])
     ])]);
     const shape = E('IFCPRODUCTDEFINITIONSHAPE', ['$', '$', L([axis, body])]);
-    const w = E('IFCWALLSTANDARDCASE', [G(`wall:${key}`), owner, str(name), '$', '$', pl, shape, str(key),
+    // IfcWall, а не IfcWallStandardCase: последний в IFC4 объявлен устаревшим
+    // и требует состава слоёв, которого у нас нет. Придумывать материал ради
+    // прохождения правила — то же самое, что правило ради галочки
+    const w = E('IFCWALL', [G(`wall:${key}`), owner, str(name), '$', '$', pl, shape, str(key),
       kind === 'bearing' ? '.SOLIDWALL.' : '.PARTITIONING.']);
     put(storey.st, w);
-    return { el: w, pl, len, th, horiz, rect };
+    return { el: w, pl, len, th, horiz, rect, cx, cy, dir: horiz ? [1, 0] : [0, 1] };
   };
 
   const wallsByLevel = new Map();
@@ -204,7 +218,7 @@ export function ifc(house, systems = [], opt = {}) {
       ['E', { x: S.w - t, y: t, w: t, h: S.h - 2 * t }]
     ];
     for (const [side, r] of shellWalls) {
-      const w = wallOf(s, `${lv.id}.shell${side}`, `Наружная стена ${side}`, r, lv.clear + (lv.floorToFloor - lv.clear), 'bearing');
+      const w = wallOf(s, `${lv.id}.shell${side}`, `Наружная стена ${side}`, r, lv.clear, 'bearing');
       w.side = side;
       list.push(w);
       addProps(w.el, `wall:${lv.id}.shell${side}`, [['id', `${lv.id}.shell${side}`], ['kind', 'shell']]);
@@ -220,10 +234,17 @@ export function ifc(house, systems = [], opt = {}) {
   // ---- проёмы и заполнения ---------------------------------------------
   // Проём вычитается из стены отношением IfcRelVoidsElement и живёт
   // в осях этой стены: иначе он приезжает рядом со стеной, а не в ней
-  const openingIn = (host, key, along, width, z0, hz, over = 60) => {
-    const pl = place(host.pl, along - host.len / 2, 0, z0);
+  // Смещение вдоль стены проецируется на её ось. Раньше оно считалось
+  // формулой на каждую сторону света, и восточная приехала зеркальной:
+  // отражение Y переворачивает ось стены, а формула об этом не знала.
+  // Проекция знает — она работает с той же осью, что и сама стена
+  const alongOf = (host, wx, wy) =>
+    (wx - host.cx) * host.dir[0] + (wy - host.cy) * host.dir[1];
+
+  const openingIn = (host, key, wx, wy, width, z0, hz, over = 60) => {
+    const pl = place(host.pl, alongOf(host, wx, wy), 0, z0);
     const shape = bodyOf([boxSolid(width, host.th + over, hz)]);
-    const op = E('IFCOPENINGELEMENT', [G(`op:${key}`), owner, str('Проём'), '$', '$', pl, shape, '$', '.OPENING.']);
+    const op = E('IFCOPENINGELEMENT', [G(`op:${key}`), owner, str('Проём'), '$', '$', pl, shape, str(key), '.OPENING.']);
     rels.push(E('IFCRELVOIDSELEMENT', [G(`voids:${key}`), owner, '$', '$', host.el, op]));
     return { op, pl };
   };
@@ -246,8 +267,7 @@ export function ifc(house, systems = [], opt = {}) {
       const host = walls.find(w => w.rect.x <= rect.x + 1 && w.rect.y <= rect.y + 1
         && w.rect.x + w.rect.w >= rect.x + rect.w - 1 && w.rect.y + w.rect.h >= rect.y + rect.h - 1);
       if (!host) continue;
-      const along = host.horiz ? rect.x + rect.w / 2 - host.rect.x : host.rect.y + host.rect.h - (rect.y + rect.h / 2);
-      const op = openingIn(host, o.id, along, o.w, 0, o.hz);
+      const op = openingIn(host, o.id, rect.x + rect.w / 2, Y(rect.y + rect.h / 2), o.w, 0, o.hz);
       if (o.kind !== 'pass') fill(s, op, o.id, 'door', 'Дверь', o.w, o.hz, host.th - 40);
       addProps(op.op, `op:${o.id}`, [['id', o.id], ['kind', o.kind || 'door']]);
     }
@@ -255,13 +275,10 @@ export function ifc(house, systems = [], opt = {}) {
     for (const w of lv.windows || []) {
       const host = walls.find(x => x.side === w.side);
       if (!host) continue;
-      const width = w.b - w.a;
-      // along отсчитывается от начала стены в её локальных осях
-      const along = w.side === 'S' ? w.a + width / 2
-        : w.side === 'N' ? w.a + width / 2
-          : w.side === 'W' ? host.rect.y + host.rect.h - (w.a + width / 2)
-            : (w.a + width / 2) - host.rect.y;
-      const op = openingIn(host, w.id, along, width, w.sill || 0, w.hz);
+      const width = w.b - w.a, c = (w.a + w.b) / 2, t = S.wall;
+      const wx = w.side === 'W' ? t / 2 : w.side === 'E' ? S.w - t / 2 : c;
+      const wy = w.side === 'S' ? Y(t / 2) : w.side === 'N' ? Y(S.h - t / 2) : Y(c);
+      const op = openingIn(host, w.id, wx, wy, width, w.sill || 0, w.hz);
       const isDoor = w.kind === 'entrance' || w.kind === 'door' || w.kind === 'gate';
       fill(s, op, w.id, isDoor ? 'door' : 'window',
         w.kind === 'gate' ? 'Ворота' : isDoor ? 'Наружная дверь' : 'Окно', width, w.hz, host.th - 60);
@@ -270,6 +287,8 @@ export function ifc(house, systems = [], opt = {}) {
   }
 
   // ---- перекрытия --------------------------------------------------------
+  // Сплошная плита запечатывает лестничную шахту и стояки: в модели дом
+  // выглядит целым, а подняться по лестнице некуда. Вырезы обязательны
   for (const s of storeys) {
     const lv = s.lv, th = lv.floorToFloor - lv.clear;
     const pl = place(s.pl, S.w / 2, Y(S.h / 2), lv.clear);
@@ -277,6 +296,19 @@ export function ifc(house, systems = [], opt = {}) {
       bodyOf([boxSolid(S.w, S.h, th)]), str(`${lv.id}.slab`), '.FLOOR.']);
     put(s.st, slab);
     addProps(slab, `slab:${lv.id}`, [['id', `${lv.id}.slab`], ['thickness', th]]);
+
+    const holes = [
+      ...(lv.stair && house.levels[house.levels.indexOf(lv) + 1] ? [[lv.stair, `${lv.id}.stair`]] : []),
+      ...(lv.riser ? [[lv.riser, lv.riser.id]] : []),
+      ...(lv.ducts || []).map(d => [d, d.id]),
+      ...(lv.flues || []).filter(f => !f.outside).map(f => [f, f.id])
+    ];
+    for (const [q, key] of holes) {
+      const hp = place(s.pl, q.x + q.w / 2, Y(q.y + q.h / 2), lv.clear - 60);
+      const op = E('IFCOPENINGELEMENT', [G(`slabop:${key}`), owner, str('Проём в перекрытии'), '$', '$', hp,
+        bodyOf([boxSolid(q.w, q.h, th + 120)]), str(key), '.OPENING.']);
+      rels.push(E('IFCRELVOIDSELEMENT', [G(`slabvoids:${key}`), owner, '$', '$', slab, op]));
+    }
   }
   {
     const s0 = storeys[0], base = 400;
@@ -284,6 +316,26 @@ export function ifc(house, systems = [], opt = {}) {
     const slab = E('IFCSLAB', [G('slab:base'), owner, str('Плита основания'), '$', '$', pl,
       bodyOf([boxSolid(S.w, S.h, base)]), str('base.slab'), '.BASESLAB.']);
     put(s0.st, slab);
+  }
+
+  // ---- веранда -----------------------------------------------------------
+  // Вход в дом по заданию только с неё: без веранды входная дверь
+  // открывается в пустоту, и это видно сразу, как только смотришь на модель
+  for (const s of storeys) {
+    const v = s.lv.veranda;
+    if (!v) continue;
+    const deck = E('IFCSLAB', [G(`veranda:${s.lv.id}`), owner, str('Веранда'), '$', '$',
+      place(s.pl, v.x + v.w / 2, Y(v.y + v.h / 2), -120),
+      bodyOf([boxSolid(v.w, v.h, 120)]), str(`${s.lv.id}.veranda`), '.FLOOR.']);
+    put(s.st, deck);
+    addProps(deck, `veranda:${s.lv.id}`, [['id', `${s.lv.id}.veranda`],
+    ['area', (v.w * v.h / 1e6).toFixed(2)]]);
+    for (const [dx, dy] of [[v.w - 100, 100], [v.w - 100, v.h / 2], [v.w - 100, v.h - 100]]) {
+      const c = E('IFCCOLUMN', [G(`vpost:${s.lv.id}:${dy}`), owner, str('Стойка веранды'), '$', '$',
+        place(s.pl, v.x + dx, Y(v.y + dy), 0),
+        bodyOf([boxSolid(150, 150, s.lv.clear)]), '$', '.COLUMN.']);
+      put(s.st, c);
+    }
   }
 
   // ---- помещения ---------------------------------------------------------
@@ -343,11 +395,12 @@ export function ifc(house, systems = [], opt = {}) {
       ...(s.lv.ducts || []).map(d => [d, 'Вентшахта', 'duct']),
       ...(s.lv.flues || []).map(f => [f, 'Дымоход', 'flue'])
     ];
-    shafts.forEach(([q, name, kind], i) => {
+    shafts.forEach(([q, name]) => {
       const pl = place(s.pl, q.x + q.w / 2, Y(q.y + q.h / 2), 0);
-      const el = E('IFCBUILDINGELEMENTPROXY', [G(`shaft:${s.lv.id}:${kind}:${i}`), owner, str(name), '$', '$', pl,
-        bodyOf([boxSolid(q.w, q.h, s.lv.floorToFloor)]), str(q.id || `${s.lv.id}.${kind}${i}`), '.ELEMENT.']);
+      const el = E('IFCBUILDINGELEMENTPROXY', [G(`shaft:${q.id}`), owner, str(name), '$', '$', pl,
+        bodyOf([boxSolid(q.w, q.h, s.lv.floorToFloor)]), str(q.id), '.ELEMENT.']);
       put(s.st, el);
+      addProps(el, `shaft:${q.id}`, [['id', q.id]]);
     });
   }
 
@@ -359,7 +412,7 @@ export function ifc(house, systems = [], opt = {}) {
     socket: ['IFCOUTLET', '.POWEROUTLET.', 'Розетка'],
     socketIP: ['IFCOUTLET', '.POWEROUTLET.', 'Розетка IP44'],
     power: ['IFCOUTLET', '.POWEROUTLET.', 'Силовой вывод'],
-    light: ['IFCLAMP', '.$.', 'Светильник'],
+    light: ['IFCLAMP', '.NOTDEFINED.', 'Светильник'],
     switch: ['IFCSWITCHINGDEVICE', '.TOGGLESWITCH.', 'Выключатель'],
     cold: ['IFCVALVE', '.ISOLATING.', 'Подводка ХВС'],
     hot: ['IFCVALVE', '.ISOLATING.', 'Подводка ГВС'],
@@ -393,7 +446,7 @@ export function ifc(house, systems = [], opt = {}) {
       const pl = place(s.pl, x, Y(y), Math.max(0, p.z - size[2] / 2));
       const args = [G(`mep:${p.id}`), owner, str(name), '$', '$', pl,
         bodyOf([boxSolid(size[0], size[1], size[2])]), str(p.id)];
-      const el = E(type, pd === '.$.' ? args : [...args, pd]);
+      const el = E(type, [...args, pd]);
       put(s.st, el);
       own.push(el);
       addProps(el, `mep:${p.id}`, [['id', p.id], ['kind', p.kind], ['z', p.z],
