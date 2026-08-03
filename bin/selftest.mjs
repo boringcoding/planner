@@ -107,6 +107,9 @@ const CASES = [
   ['помещение залезло на стену', /налезает на стену/,
     h => { room(h, 'first', 'Гараж').h += 250; }],
 
+  ['подпись помещения наехала на вентшахту', /наезжает на мебель/,
+    h => { room(h, 'second', 'Коридор').label.x = 4300; }],
+
   ['мебель встала на вентшахту', /стоит на вентшахте/,
     h => { lvl(h, 'cokol').furniture.find(f => f.l === 'стеллаж').y = 6000; }],
 
@@ -169,10 +172,14 @@ const SCASES = [
     d => { const p = sys(d, 'eom').points.find(x => x.room === 'second.r4' && x.kind === 'socketIP'); p.side = 'W'; p.along = 400; }],
 
   ['радиатор не под окном', /радиатор не под окном/,
-    d => { kind(d, 'ov', 'radiator').along = 200; }],
+    d => { const p = sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator');
+           p.side = 'N'; p.along = 200; }],
 
   ['радиатор шире окна', /длиннее окна/,
-    d => { kind(d, 'ov', 'radiator').len = 4000; }],
+    d => { sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator').len = 4000; }],
+
+  ['помещение без отопления', /ничем не отапливается/,
+    d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'radiator' && p.room === 'second.r1')); }],
 
   ['радиатор за мебелью', /радиатор перекрыт мебелью/,
     d => { const p = sys(d, 'ov').points.find(x => x.room === 'first.r5' && x.kind === 'radiator');

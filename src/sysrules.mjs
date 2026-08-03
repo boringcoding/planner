@@ -84,10 +84,13 @@ export function checkSystems(house, data) {
 
         // 5. радиатор не длиннее своего окна и стоит под ним
         if (p.kind === 'radiator') {
+          // под окном — там, где окна есть. В цоколе окон нет вовсе,
+          // и радиатор там встаёт на свободную стену, а не «не туда»
+          const hasWin = SIDES.some(sd => faceItems(house, L, room, sd).some(i => i.kind === 'window'));
           const win = items.find(it => it.kind === 'window'
             && p.along > it.a - 400 && p.along < it.b + 400);
-          if (!win) E(`${tag}: радиатор не под окном`);
-          else if (p.len > win.b - win.a) E(`${tag}: радиатор ${p.len} длиннее окна ${win.b - win.a}`);
+          if (!win && hasWin) E(`${tag}: радиатор не под окном`);
+          else if (win && p.len > win.b - win.a) E(`${tag}: радиатор ${p.len} длиннее окна ${win.b - win.a}`);
           // мебель перед радиатором — это отопление шкафа, а не помещения
           for (const it of items) {
             if (it.kind !== 'furn' || it.z1 < 300) continue;
@@ -141,6 +144,15 @@ export function checkSystems(house, data) {
           const wet = r.tag === 'wet' || /Кухня|Сауна|Котельная|Гараж/.test(r.name);
           if (wet && !has(r.id, 'exhaust')) E(`«${r.name}» (${L.title}) без вытяжки`);
           if (r.tag === 'quiet' && !has(r.id, 'supply')) E(`«${r.name}» (${L.title}) без притока`);
+          // отопление: радиатор, либо собственный прибор — печь сауны, котёл.
+          // Лестница и гардеробная греются от смежных помещений
+          const own = (L.furniture || []).some(g => (g.sym === 'heaterSauna' || g.sym === 'boiler')
+            && g.x > r.x && g.x < r.x + r.w && g.y > r.y && g.y < r.y + r.h);
+          // помещение, открытое проёмом без полотна, отапливается вместе с соседним
+          const open = (L.openings || []).some(o => o.kind === 'pass'
+            && o.x > r.x - 300 && o.x < r.x + r.w + 300 && o.y > r.y - 300 && o.y < r.y + r.h + 300);
+          if (!['stair', 'wardrobe'].includes(r.tag) && !has(r.id, 'radiator') && !own && !open)
+            E(`«${r.name}» (${L.title}) ничем не отапливается`);
         }
       }
     if (sys.id === 'vk')

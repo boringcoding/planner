@@ -231,6 +231,19 @@ for (const L of house.levels) {
         add('ov', { level: L.id, room: room.id, side, along: Math.round(mid), z: 150, kind: 'radiator', len });
       }
     }
+    // помещение без окон радиатора не получило бы вовсе: в цоколе окон нет,
+    // а отапливать его надо. Ставим на самый длинный свободный участок стены
+    const NOHEAT = ['stair', 'wardrobe'];
+    const heated = !NOHEAT.includes(room.tag) && !/Сауна/.test(room.name);
+    if (heated && !P.some(x => x.sys === 'ov' && x.kind === 'radiator' && x.room === room.id)) {
+      const sp = SIDES.flatMap(x => freeSpans(house, L, room, x, 150))
+        .sort((a, b) => (b.b - b.a) - (a.b - a.a))[0];
+      if (sp) {
+        const len = Math.min(1200, Math.max(600, Math.round((sp.b - sp.a) * 0.6)));
+        add('ov', { level: L.id, room: room.id, side: sp.side, along: Math.round((sp.a + sp.b) / 2), z: 150, kind: 'radiator', len });
+      }
+    }
+
     const wetish = room.tag === 'wet' || /Кухня|Сауна|Котельная|Гараж/.test(room.name);
     if (wetish || room.tag === 'quiet' || room.tag === 'hall') {
       const kind = wetish ? 'exhaust' : 'supply';
@@ -257,25 +270,25 @@ for (const L of house.levels) {
 
 const SYS = [
   {
-    id: 'eom', title: 'ЭОМ · электрооборудование и освещение',
+    id: 'eom', trunk: 'ВВГнг-LS 5×6, питающая', title: 'ЭОМ · электрооборудование и освещение',
     source: { level: 'cokol', x: 7200, y: 2725, z: 1600, l: 'щит' },
     vertical: { x: 2460, y: 7500 }, run: 'ceiling',
     note: 'Ввод 30 кВт / 380 В. Кабель по потолку в гофре, спуски в штрабах.'
   },
   {
-    id: 'vk', title: 'ВК · водоснабжение и канализация',
+    id: 'vk', trunk: 'PEX 25, стояк', title: 'ВК · водоснабжение и канализация',
     source: { level: 'cokol', x: 550, y: 8100, z: 400, l: 'ввод и стояк' },
     vertical: { x: 550, y: 8100 }, run: 'floor',
     note: 'Ввод с юго-запада. Один стояк на три уровня, разводка по полу в гильзах.'
   },
   {
-    id: 'ov', title: 'ОВ · отопление и вентиляция',
+    id: 'ov', trunk: 'PEX 25, магистраль', title: 'ОВ · отопление и вентиляция',
     source: { level: 'cokol', x: 7150, y: 1450, z: 800, l: 'котёл' },
     vertical: { x: 2460, y: 8600 }, run: 'floor',
     note: 'Котёл на твёрдом топливе с буфером. Приточно-вытяжная установка в цоколе, магистраль через вентшахту.'
   },
   {
-    id: 'ss', title: 'СС · слаботочные системы',
+    id: 'ss', trunk: 'UTP cat.6, магистраль', title: 'СС · слаботочные системы',
     source: { level: 'cokol', x: 7200, y: 2400, z: 1600, l: 'слаботочный шкаф' },
     vertical: { x: 2460, y: 7000 }, run: 'ceiling',
     note: 'Витая пара звездой от шкафа, извещатели и датчики протечки — шлейфом.'

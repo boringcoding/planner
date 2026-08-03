@@ -405,6 +405,8 @@ export function check(house, brief) {
     const obstacles = furn.map(box);
     if (L.stair) obstacles.push(stairRun(L.stair));
     if (L.riser) obstacles.push(L.riser);
+    for (const d of L.ducts || []) obstacles.push(d);
+    for (const f of L.flues || []) if (!f.outside) obstacles.push(f);
     for (const r of rooms) {
       const b = roomBlock(r).box;
       if (!inside(b, r)) E(L, `подпись «${r.name}» вылезает за границы помещения`);
