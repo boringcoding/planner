@@ -23,8 +23,16 @@ export const LIMITS = {
   flueMin: 400,            // сторона шахты дымохода (сэндвич d200 с разделкой)
   roomMin: 900,            // самая узкая сторона любого помещения
   quietMin: 2400,          // то же для жилой комнаты
-  labelClear: 30           // допуск при проверке подписей на наложение
+  labelClear: 30,          // допуск при проверке подписей на наложение
+  tallMin: 1200,           // с этой высоты предмет считается высоким
+  doorHzMin: 1900,         // высота дверного проёма
+  glazingRatio: 8          // площадь остекления жилой комнаты — не меньше 1/8 пола
 };
+
+// шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
+// со стиральной колонной — не ряд, а ниша: правило о проходе к ней не относится
+const STORAGE = new Set(['rack', 'wardrobe', 'dresser']);
+const tall = f => (f.hz || 0) >= LIMITS.tallMin;
 
 const rect = (x, y, w, h) => ({ x, y, w, h });
 const box = f => f.t === 'c' ? rect(f.x - f.r, f.y - f.r, 2 * f.r, 2 * f.r) : rect(f.x, f.y, f.w, f.h);
@@ -63,6 +71,33 @@ function approachZones(o, depth) {
   return [rect(o.x - depth, o.y, depth, o.w), rect(o.x + o.t, o.y, depth, o.w)];
 }
 
+// Помещения и стены — два описания одного и того же пола, и разъехаться они
+// могут молча: невидимый на чертеже прямоугольник помещения ничем себя не
+// выдаёт. Разбиваем внутренний габарит по всем координатам граней и смотрим,
+// какая клетка осталась ничьей, а какая попала и в стену, и в помещение
+function tiling(inner, rooms, walls) {
+  const clip = r => rect(Math.max(r.x, inner.x), Math.max(r.y, inner.y),
+    Math.min(r.x + r.w, inner.x + inner.w) - Math.max(r.x, inner.x),
+    Math.min(r.y + r.h, inner.y + inner.h) - Math.max(r.y, inner.y));
+  const R = rooms.map(clip), W = walls.map(clip).filter(w => w.w > 0 && w.h > 0);
+  const edges = (k, s) => [...new Set([inner[k], inner[k] + inner[s],
+  ...R.flatMap(r => [r[k], r[k] + r[s]]), ...W.flatMap(r => [r[k], r[k] + r[s]])])]
+    .filter(v => v >= inner[k] && v <= inner[k] + inner[s]).sort((a, b) => a - b);
+  const xs = edges('x', 'w'), ys = edges('y', 'h');
+  const free = [], over = [];
+  const hit = (l, cx, cy) => l.findIndex(r => cx > r.x && cx < r.x + r.w && cy > r.y && cy < r.y + r.h);
+  for (let i = 0; i + 1 < xs.length; i++)
+    for (let j = 0; j + 1 < ys.length; j++) {
+      const cell = rect(xs[i], ys[j], xs[i + 1] - xs[i], ys[j + 1] - ys[j]);
+      if (area(cell) < 10000) continue;
+      const cx = xs[i] + cell.w / 2, cy = ys[j] + cell.h / 2;
+      const r = hit(R, cx, cy), w = hit(W, cx, cy);
+      if (r < 0 && w < 0) free.push(cell);
+      if (r >= 0 && w >= 0) over.push({ cell, room: rooms[r] });
+    }
+  return { free, over };
+}
+
 function clearZone(f, shell) {
   if (!f.clear) return null;
   const b = box(f), d = f.clear.d;
@@ -92,6 +127,7 @@ export function check(house, brief) {
   const S = house.shell;
   const inner = rect(S.wall, S.wall, S.w - 2 * S.wall, S.h - 2 * S.wall);
   const E = (lvl, msg) => errs.push(`${lvl.title}: ${msg}`);
+  const ids = new Set();
 
   for (const L of house.levels) {
     const rooms = L.rooms, walls = L.walls, opens = L.openings || [], wins = L.windows || [], furn = L.furniture || [];
@@ -103,6 +139,15 @@ export function check(house, brief) {
     for (let i = 0; i < rooms.length; i++)
       for (let j = i + 1; j < rooms.length; j++)
         if (overlap(rooms[i], rooms[j]) > 100) E(L, `наложение «${rooms[i].name}» и «${rooms[j].name}»`);
+
+    // 1а. помещения и стены вместе покрывают внутренний габарит без зазоров
+    // и без наложений. Прямоугольник помещения на чертеже не виден, поэтому
+    // разъехаться со стенами он может незаметно — глазами это не ловится
+    const tile = tiling(inner, rooms, walls);
+    for (const c of tile.free.slice(0, 3))
+      E(L, `пол ${c.w} × ${c.h} мм у ${c.x},${c.y} не принадлежит ни одному помещению`);
+    for (const o of tile.over.slice(0, 3))
+      E(L, `«${o.room.name}» налезает на стену у ${o.cell.x},${o.cell.y}`);
 
     // 2. проёмы лежат в стенах
     for (const o of opens) {
@@ -169,13 +214,14 @@ export function check(house, brief) {
           E(L, `${f.l || f.t} перекрывает зону подхода к двери ${w.side} ${w.a}–${w.b}`);
     }
 
-    // 9. высокая мебель не загораживает окна
+    // 9. мебель не загораживает окна. Загораживает та, что поднимается выше
+    // подоконника: машина под высоким окном гаража свет не отнимает
     for (const w of wins) {
       if (w.kind === 'gate') continue;
       const band = windowBand(w, S, LIMITS.windowBand);
       for (const f of furn)
-        if (f.tall && overlap(band, box(f)) > 10000)
-          E(L, `${f.l || 'высокая мебель'} загораживает окно ${w.side} ${w.a}–${w.b}`);
+        if ((f.hz || 0) > (w.sill || 0) + 300 && overlap(band, box(f)) > 10000)
+          E(L, `${f.l || f.sym || 'мебель'} загораживает окно ${w.side} ${w.a}–${w.b}`);
     }
 
     // 10. свободная зона перед сантехникой и кухонным фронтом
@@ -191,7 +237,7 @@ export function check(house, brief) {
     for (let i = 0; i < furn.length; i++)
       for (let j = i + 1; j < furn.length; j++) {
         const a = box(furn[i]), b = box(furn[j]);
-        if (!(furn[i].tall && furn[j].tall) || furn[i].unit || furn[j].unit) continue;
+        if (!(STORAGE.has(furn[i].sym) && STORAGE.has(furn[j].sym))) continue;
         const sameRoom = rooms.find(r => overlap(a, r) > 0.9 * area(a) && overlap(b, r) > 0.9 * area(b));
         if (!sameRoom) continue;
         const yOv = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
@@ -254,7 +300,7 @@ export function check(house, brief) {
       if (!room) continue;
       // тумба у изголовья — это и есть подход, а не помеха: считаем только
       // высокую мебель, мимо которой действительно не пройти
-      const others = furn.filter(g => g !== f && g.tall).map(box);
+      const others = furn.filter(g => g !== f && tall(g)).map(box);
       // если в комнате два проёма, изножье — транзит между ними, а не тупик
       const doors = opens.filter(o => overlap(openingRect(o), rect(room.x - 200, room.y - 200, room.w + 400, room.h + 400)) > 0).length;
       const footMin = doors >= 2 ? 900 : LIMITS.bedFoot;
@@ -353,6 +399,47 @@ export function check(house, brief) {
       if (!inside(b, r)) E(L, `подпись «${r.name}» вылезает за границы помещения`);
       for (const o of obstacles)
         if (overlap(shrink(b, 20), o) > 0) E(L, `подпись «${r.name}» наезжает на мебель`);
+    }
+
+    // 25. у каждого элемента есть свой идентификатор. Развёртки по электрике
+    // и сантехнике будут ссылаться на стену, прибор и проём по нему: имя
+    // помещения и порядок в массиве меняются, идентификатор — нет
+    for (const [what, list] of [['стена', walls], ['помещение', rooms],
+    ['проём', opens], ['окно', wins], ['мебель', furn]]) {
+      for (const el of list) {
+        if (!el.id) { E(L, `${what} ${el.x},${el.y} без идентификатора`); continue; }
+        if (ids.has(el.id)) E(L, `идентификатор ${el.id} повторяется`);
+        ids.add(el.id);
+      }
+    }
+
+    // 26. высоты: проём умещается под потолок, дверь не ниже человека,
+    // ни один предмет не выше чистой высоты этажа
+    for (const o of opens) {
+      const hz = o.hz || 0;
+      if (hz < LIMITS.doorHzMin) E(L, `проём ${o.x},${o.y} высотой ${hz} ниже ${LIMITS.doorHzMin}`);
+      if (hz > L.clear) E(L, `проём ${o.x},${o.y} высотой ${hz} не влезает под потолок ${L.clear}`);
+    }
+    for (const w of wins) {
+      const sill = w.sill || 0, hz = w.hz || 0;
+      if (hz <= 0) E(L, `окно ${w.side} ${w.a}–${w.b} без высоты`);
+      else if (sill + hz > L.clear) E(L, `окно ${w.side} ${w.a}–${w.b}: верх ${sill + hz} выше потолка ${L.clear}`);
+      if ((w.kind === 'entrance' || w.kind === 'door') && (sill > 0 || hz < LIMITS.doorHzMin))
+        E(L, `дверь ${w.side} ${w.a}–${w.b}: порог ${sill}, высота ${hz}`);
+    }
+    for (const f of furn)
+      if ((f.hz || 0) > L.clear)
+        E(L, `${f.l || f.sym} высотой ${f.hz} не встаёт под потолок ${L.clear}`);
+
+    // 27. света в жилой комнате не меньше нормы: площадь светового проёма
+    // от 1/8 площади пола
+    for (const r of rooms) {
+      if (r.tag !== 'quiet') continue;
+      const glass = wins.filter(w => !w.kind && overlap(windowBand(w, S, 300), r) > 1000)
+        .reduce((s, w) => s + (w.b - w.a) * (w.hz || 0), 0);
+      const need = r.w * r.h / LIMITS.glazingRatio;
+      if (glass < need)
+        E(L, `«${r.name}»: остекление ${(glass / 1e6).toFixed(1)} м² меньше нормы ${(need / 1e6).toFixed(1)} м²`);
     }
 
     // 20. ни одна подпись листа не наезжает на другую
