@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { renderLevel, renderSystem, explication } from '../src/render.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
+import { ifc } from '../src/ifc.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -21,6 +22,13 @@ const levels = house.levels.map(L => {
 });
 
 const bills = systems.map(sys => ({ sys, b: bill(house, sys) }));
+const ifcText = ifc(house, systems, { name: 'house.ifc' });
+
+// Движок web-ifc раздаётся рядом со страницей, если он установлен.
+// Нет — страница собирается без 3D: сайт не должен падать из-за смотрелки
+const WEB_IFC = ['web-ifc-api-iife.js', 'web-ifc.wasm'];
+const engineDir = new URL('../node_modules/web-ifc/', import.meta.url);
+const hasEngine = WEB_IFC.every(f => fs.existsSync(new URL(f, engineDir)));
 const elevs = house.levels.flatMap(L => elevationRooms(L).map(r => ({ L, r, svg: renderElevation(house, L, r, systems) })));
 
 const totalUseful = levels.reduce((s, { e }) => s + e.total, 0);
@@ -37,7 +45,7 @@ const facts = [
 
 const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
   + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.title.split(' · ')[0])}</a>`).join('')
-  + '<a href="#elev">Развёртки</a>';
+  + '<a href="#elev">Развёртки</a>' + (hasEngine ? '<a href="#ifc">Модель</a>' : '');
 
 const sheets = levels.map(({ L, e, svg }) => `
     <section class="sheet" id="${slug(L.id)}">
@@ -86,11 +94,32 @@ const elevSection = `
       ${elevs.map(({ L, r, svg }) => `<figure class="plan elev"><figcaption>${esc(r.name)} · ${esc(L.title.toLowerCase())}</figcaption>${svg}</figure>`).join('\n      ')}
     </section>`;
 
+const viewerSection = hasEngine ? `
+    <section class="sheet" id="ifc">
+      <div class="sheet-head">
+        <h2>Модель</h2>
+        <p class="meta">Тот же дом в IFC4. Файл читает web-ifc — движок, который ничего не знает
+          про этот репозиторий: на экране выгрузка, а не наша геометрия, нарисованная второй раз.</p>
+      </div>
+      <div class="viewer" id="viewer">
+        <div class="v-panel"></div>
+        <canvas></canvas>
+        <button type="button" class="v-start">Показать модель</button>
+        <p class="v-status">7 МБ движка загрузятся по нажатию, не раньше</p>
+      </div>
+      <p class="note">Выгрузка: <a href="house.ifc" download>house.ifc</a> — ${(ifcText.length / 1024).toFixed(0)} КБ,
+        IFC4, единицы миллиметры. Помещения, стены, проёмы с заполнениями, перекрытия, лестница,
+        мебель и ${systems.reduce((n, s) => n + s.points.length, 0)} точек разделов, собранных в четыре системы.
+        Идентификаторы вида <code>second.f12</code> уходят в свойства элементов, поэтому обратная связь
+        с этим репозиторием не теряется.</p>
+    </section>` : '';
+
 const html = `<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23171C24'/%3E%3Crect x='3' y='3' width='10' height='10' fill='%23FBFAF7'/%3E%3Crect x='3' y='9' width='10' height='1' fill='%23171C24'/%3E%3C/svg%3E">
 <title>${esc(house.project.title)} — планировка</title>
 <meta name="description" content="Планировка жилого дома: ${levels.map(({ L }) => esc(L.title.toLowerCase())).join(', ')}. Чертежи и экспликации собраны из одного файла геометрии.">
 <style>
@@ -126,6 +155,24 @@ const html = `<!doctype html>
   .plan { margin: 24px 0 0; background: #E4E3DC; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
   .plan svg { display: block; width: 100%; height: auto; }
   .plan + .plan { margin-top: 16px; }
+  .viewer { position: relative; margin-top: 24px; border: 1px solid var(--line); border-radius: 4px;
+            background: #E4E3DC; overflow: hidden; }
+  .viewer canvas { display: block; width: 100%; height: min(70vh, 560px); touch-action: none; }
+  .v-panel { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 0; }
+  .v-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .v-title { font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: #9A9CA1;
+             margin-right: 6px; min-width: 52px; }
+  .v-chip { --c: #6E7178; font: 13px/1 "IBM Plex Sans", system-ui, sans-serif; color: #6E7178;
+            background: transparent; border: 1px solid #CFCDC4; border-radius: 999px;
+            padding: 5px 11px; cursor: pointer; }
+  .v-chip.on { color: #171C24; border-color: var(--c); box-shadow: inset 0 0 0 1px var(--c); }
+  .v-start { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+             font: 15px/1 "IBM Plex Sans", system-ui, sans-serif; color: #171C24; background: #FBFAF7;
+             border: 1px solid #171C24; border-radius: 999px; padding: 11px 22px; cursor: pointer; }
+  .viewer.ready .v-start, .viewer.busy .v-start { display: none; }
+  .v-status { position: absolute; left: 12px; bottom: 10px; margin: 0; font-size: 12px;
+              font-family: "IBM Plex Mono", ui-monospace, monospace; color: #6E7178;
+              background: rgba(251,250,247,0.82); border-radius: 999px; padding: 4px 10px; }
   .elev figcaption { font-size: 12px; letter-spacing: 0.09em; text-transform: uppercase;
                      color: var(--ink35); padding: 10px 14px 0; }
   table.expl { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 15px; }
@@ -172,6 +219,7 @@ const html = `<!doctype html>
 ${sheets}
 ${sysSections}
 ${elevSection}
+${viewerSection}
 
   <section class="brief" id="brief">
     <h2>Задание</h2>
@@ -186,6 +234,17 @@ ${elevSection}
 
   <footer>Собрано из <code>data/house.json</code>. Размеры в миллиметрах, площади посчитаны по геометрии.</footer>
 </div>
+${hasEngine ? `<script src="viewer.js"></script>
+<script>
+  (() => {
+    const root = document.getElementById('viewer');
+    if (!root) return;
+    root.querySelector('.v-start').addEventListener('click', () => {
+      root.classList.add('busy');
+      window.startViewer(root);
+    }, { once: true });
+  })();
+</script>` : ''}
 </body>
 </html>
 `;
@@ -198,4 +257,10 @@ for (const { L, svg } of levels) fs.writeFileSync(`site/${L.id}.svg`, svg);
 for (const { sys, b } of bills)
   for (const L of house.levels) fs.writeFileSync(`site/${sys.id}-${L.id}.svg`, renderSystem(house, L, sys, b));
 for (const { r, svg } of elevs) fs.writeFileSync(`site/elev-${r.id}.svg`, svg);
-console.log(`site/index.html + ${levels.length + bills.length * house.levels.length + elevs.length} SVG`);
+fs.writeFileSync('site/house.ifc', ifcText);
+if (hasEngine) {
+  fs.copyFileSync(new URL('../src/viewer.js', import.meta.url), 'site/viewer.js');
+  for (const f of WEB_IFC) fs.copyFileSync(new URL(f, engineDir), `site/${f}`);
+}
+console.log(`site/index.html + ${levels.length + bills.length * house.levels.length + elevs.length} SVG`
+  + ` + house.ifc${hasEngine ? ' + смотрелка' : ' (движок не установлен, 3D без него)'}`);

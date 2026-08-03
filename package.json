@@ -12,9 +12,13 @@
     "points": "node bin/genpoints.mjs",
     "shot": "node bin/shot.mjs",
     "site": "node bin/site.mjs",
-    "all": "npm run check && npm run selftest && npm run build && npm run shot"
+    "all": "npm run check && npm run selftest && npm run build && npm run ifc && npm run shot",
+    "ifc": "node bin/ifc.mjs"
   },
   "optionalDependencies": {
     "@resvg/resvg-js": "^2.6.2"
+  },
+  "devDependencies": {
+    "web-ifc": "0.0.77"
   }
 }

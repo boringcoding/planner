@@ -24,10 +24,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # движок смотрелки ставится сюда же: без него страница соберётся,
+      # но без 3D, а это тихая потеря
+      - run: npm i --omit=optional --no-audit --no-fund
       # правила — это ворота: сайт не собирается с нарушениями геометрии
       - run: npm run check
       # и сами правила тоже проверяются: каждое обязано поймать свой дефект
       - run: npm run selftest
+      # выгрузка проверяет сама себя: ссылки, количества, вырезанные проёмы
+      - run: npm run ifc
       - run: npm run site
       - uses: actions/upload-pages-artifact@v3
         with:
