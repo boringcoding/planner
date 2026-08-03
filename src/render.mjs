@@ -152,9 +152,17 @@ export function sheet(house, opt = {}) {
   return {
     S, showDims, dx, dx2, wx, ex,
     legendY: S.h + 3050,          // полоса условных обозначений и масштаба
-    padL: 3900, padT: 1800, padB: 4800, padR: vExt + 1700
+    padL: 3900, padT: 2900, padB: 4800, padR: vExt + 1700
   };
 }
+
+// Штамп: лист должен называть сам себя. PNG уходит в переписку без страницы
+// вокруг, и без заголовка по нему не сказать даже, какой это уровень
+const stampTexts = (house, L) => [
+  { t: `${house.project.title} · ${L.title}`, cx: 0, baseline: -2150, fs: 420, font: 'sans', anchor: 'start' },
+  ...(L.meta ? [{ t: L.meta, cx: 0, baseline: -1700, fs: 260, font: 'mono', anchor: 'start' }] : []),
+  { t: 'размеры в миллиметрах', cx: 0, baseline: -1300, fs: 240, font: 'mono', anchor: 'start' }
+];
 
 // Условные обозначения собираются по тому, что на листе есть: легенда с
 // пунктом, которого на чертеже нет, врёт не меньше, чем отсутствующая
@@ -193,6 +201,10 @@ export function labelBoxes(house, L, opt = {}) {
     for (const d of chainTexts('x', S.h + 1850, [0, S.w])) add('dim', 'габарит X', d);
     for (const d of chainTexts('y', g.dx, L.dims.y)) add('dim', 'размер Y', d);
     for (const d of chainTexts('y', g.dx2, [0, S.h])) add('dim', 'габарит Y', d);
+  }
+  for (const d of stampTexts(house, L)) {
+    const b = textBox(d);
+    out.push({ kind: 'stamp', owner: d.t.slice(0, 24), x: d.cx, y: b.y, w: b.w, h: b.h });
   }
   const items = legendItems(house, L);
   legendItems.list = items;
@@ -616,6 +628,8 @@ export function renderLevel(house, L, opt = {}) {
     s += chain('y', g.dx2, [0, S.h]);
   }
 
+  for (const d of stampTexts(house, L))
+    s += t2svg(d, d.fs > 300 ? C.ink : C.ink60).replace('text-anchor="middle"', 'text-anchor="start"');
   s += scaleBar(0, g.legendY + 1150);
   s += legend(house, L, g);
 

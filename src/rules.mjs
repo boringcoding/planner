@@ -399,6 +399,8 @@ export function check(house, brief) {
       if (host && !inside(lb, host)) E(L, `подпись «${d.t}» вылезает за «${host.name}»`);
       for (const g of furn)
         if (g !== f && overlap(shrink(lb, 15), box(g)) > 0) E(L, `подпись «${d.t}» наезжает на ${g.l || g.sym || g.t}`);
+      for (const q of [L.riser, ...(L.ducts || []), ...(L.flues || []).filter(x => !x.outside)])
+        if (q && overlap(shrink(lb, 15), q) > 0) E(L, `подпись «${d.t}» наезжает на шахту ${q.x},${q.y}`);
     }
 
     // 19. блок подписи помещения лежит в своём помещении и не наезжает на мебель
