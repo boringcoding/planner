@@ -82,7 +82,7 @@ export function renderElevation(house, L, room, systems = []) {
   // проёмы, окна, мебель
   for (const side of SIDES) {
     const x0 = off[side];
-    for (const it of faceItems(house, L, room, side)) {
+    for (const it of faceItems(house, L, room, side, 260)) {
       const x = x0 + it.a, w = it.b - it.a;
       if (it.kind === 'furn') {
         if (!it.z1) continue;
@@ -115,15 +115,18 @@ export function renderElevation(house, L, room, systems = []) {
         continue;
       }
       let dy = 0;                                         // одинаковые места разводим по вертикали
-      while (placed.some(q => Math.abs(q.x - x) < 320 && Math.abs(q.y - (y + dy)) < 320)) dy -= 340;
-      placed.push({ x, y: y + dy });
+      while (placed.some(q => Math.abs(q.x - x) < 340 && Math.abs(q.y - (y + dy)) < 340)) dy -= 360;
       s += pill(x, y + dy, GLYPH[p.kind] || '?', color);
-      s += txt(x + 250, y + dy + 70, String(p.z), 180, C.ink35, 'start');
+      // отметка пишется только там, где ей есть место: подписанная поверх
+      // соседней метки цифра мешает больше, чем помогает
+      const free = !placed.some(q => q.x > x && q.x - x < 900 && Math.abs(q.y - (y + dy)) < 260);
+      placed.push({ x, y: y + dy });
+      if (free) s += txt(x + 260, y + dy + 70, String(p.z), 180, C.ink35, 'start');
     }
   }
 
   s += txt(0, H + 700, `${room.name} · развёртка · ${L.title}`, 300, C.ink, 'start', false);
-  s += txt(per, H + 700, `периметр ${per} · h ${H}`, 260, C.ink60, 'end');
+  s += txt(0, H + 1180, `периметр ${per} · h ${H}`, 250, C.ink60, 'start');
   s += `</svg>`;
   return s;
 }

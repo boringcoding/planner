@@ -453,6 +453,24 @@ export function check(house, brief) {
         E(L, `«${r.name}»: остекление ${(glass / 1e6).toFixed(1)} м² меньше нормы ${(need / 1e6).toFixed(1)} м²`);
     }
 
+    // 28. размерная цепочка описывает то, что нарисовано. Цифра в цепочке
+    // берётся из данных и на чертёж попадает как есть: разъехаться с осью
+    // стены она может молча, а читают чертёж именно по ней
+    for (const [axis, size] of [['x', S.w], ['y', S.h]]) {
+      const arr = (L.dims && L.dims[axis]) || [];
+      if (arr.length < 2 || arr[0] !== 0 || arr[arr.length - 1] !== size)
+        E(L, `цепочка ${axis} не от 0 до ${size}`);
+      for (let i = 1; i < arr.length; i++)
+        if (arr[i] <= arr[i - 1]) E(L, `цепочка ${axis} идёт назад на ${arr[i]}`);
+      for (const v of arr.slice(1, -1)) {
+        const hit = walls.some(w => {
+          const [a, b] = axis === 'x' ? [w.x, w.x + w.w] : [w.y, w.y + w.h];
+          return Math.abs((a + b) / 2 - v) <= 10;
+        });
+        if (!hit) E(L, `отметка ${v} в цепочке ${axis} не совпадает ни с одной осью стены`);
+      }
+    }
+
     // 20. ни одна подпись листа не наезжает на другую
     const boxes = labelBoxes(house, L);
     for (let i = 0; i < boxes.length; i++)

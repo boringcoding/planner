@@ -53,6 +53,18 @@ export function spanOn(f, r, gap = 80) {
   return e - s > 100 ? { a: s, b: e } : null;
 }
 
+// к какой грани предмет ближе всего
+export function nearestFace(room, r) {
+  let best = null, bd = Infinity;
+  for (const side of SIDES) {
+    const f = face(room, side);
+    const [n1, n2] = f.axis === 'x' ? [r.y, r.y + r.h] : [r.x, r.x + r.w];
+    const d = Math.min(Math.abs(n1 - f.pos), Math.abs(n2 - f.pos));
+    if (d < bd - 1) { bd = d; best = side; }
+  }
+  return best;
+}
+
 // прямоугольник элемента в плане
 const openRect = o => o.dir === 'h' ? { x: o.x, y: o.y, w: o.w, h: o.t } : { x: o.x, y: o.y, w: o.t, h: o.w };
 const furnRect = f => f.t === 'c'
@@ -67,8 +79,11 @@ function winRect(win, S) {
   return { x: S.w - t, y: win.a, w: t, h: win.b - win.a };
 }
 
-// всё, что видно на грани изнутри помещения
-export function faceItems(house, L, room, side) {
+// Всё, что видно на грани изнутри помещения. gap — с какого зазора предмет
+// считается стоящим у стены: правилам нужен строгий (иначе шкаф в 150 мм от
+// стены начнёт «закрывать» розетку на соседней), развёртке — свободнее,
+// на ней и оборудование с сервисным зазором стоит у этой самой стены
+export function faceItems(house, L, room, side, gap = 80) {
   const f = face(room, side), S = house.shell, out = [];
   for (const o of L.openings || []) {
     const s = spanOn(f, openRect(o));
@@ -82,7 +97,10 @@ export function faceItems(house, L, room, side) {
     out.push({ kind, id: w.id, ...s, z0: w.sill || 0, z1: (w.sill || 0) + w.hz });
   }
   for (const g of L.furniture || []) {
-    const s = spanOn(f, furnRect(g));
+    // предмет принадлежит одной грани — ближайшей. Иначе шкаф в углу
+    // появляется на двух развёртках сразу и дважды занимает место
+    if (nearestFace(room, furnRect(g)) !== side) continue;
+    const s = spanOn(f, furnRect(g), gap);
     if (s) out.push({ kind: 'furn', id: g.id, l: g.l, sym: g.sym, ...s, z0: 0, z1: g.hz || 0 });
   }
   return out.sort((a, b) => a.a - b.a);

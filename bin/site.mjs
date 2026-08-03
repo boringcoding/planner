@@ -36,7 +36,7 @@ const facts = [
 ];
 
 const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
-  + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.id.toUpperCase())}</a>`).join('')
+  + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.title.split(' · ')[0])}</a>`).join('')
   + '<a href="#elev">Развёртки</a>';
 
 const sheets = levels.map(({ L, e, svg }) => `
