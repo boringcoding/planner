@@ -50,6 +50,7 @@ const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a
 const shrink = (r, m) => rect(r.x + m, r.y + m, r.w - 2 * m, r.h - 2 * m);
 const openingRect = o => o.dir === 'h' ? rect(o.x, o.y, o.w, o.t) : rect(o.x, o.y, o.t, o.w);
 const stairRun = st => { const g = stairGeom(st); return rect(g.runX0, st.y, g.run, st.h); };
+const stairLanding = st => { const g = stairGeom(st); return rect(g.landX0, st.y, g.landing, st.h); };
 
 function windowRect(win, shell) {
   const t = shell.wall, W = shell.w, H = shell.h;

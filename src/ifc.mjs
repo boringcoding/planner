@@ -360,7 +360,7 @@ export function ifc(house, systems = [], opt = {}) {
     if (!other) continue;                       // с верхнего этажа марш не идёт
     const climb = other.base - s.lv.base, rise = climb / st.risers;
     const half = st.risers / 2;                 // маршей два, подъёмов поровну
-    const { steps, landing, width } = stairGeom(st);
+    const g = stairGeom(st), { steps, landing, width } = g;
     const cx = st.x + st.w / 2, cy = st.y + st.h / 2;
 
     // Ходим так же, как ходит человек: от восточного торца на запад до
@@ -373,13 +373,13 @@ export function ifc(house, systems = [], opt = {}) {
       const j = up ? i : i - half;              // номер ступени внутри марша
       if (j > steps) continue;                  // последний подъём — на площадку и на пол
       // оба марша прижаты к торцу, с которого входят и на который выходят
-      const x = st.x + st.w - (up ? j : steps - j + 1) * st.tread;
+      const x = g.stepX(j, up);
       const y = up ? st.y : st.y + st.h - width;
       solids.push(boxSolid(st.tread, width, rise * i,
         x + st.tread / 2 - cx, Y(y + width / 2) - Y(cy)));
     }
     // промежуточная площадка: на неё приходит первый марш, с неё уходит второй
-    solids.push(boxSolid(landing, st.h, climb / 2, st.x + landing / 2 - cx, 0));
+    solids.push(boxSolid(landing, st.h, climb / 2, g.landX0 + landing / 2 - cx, 0));
     const pl = place(s.pl, st.x + st.w / 2, Y(st.y + st.h / 2), 0);
     const el = E('IFCSTAIR', [G(`stair:${s.lv.id}`), owner, str('Лестница'), '$', '$', pl,
       bodyOf(solids), str(`${s.lv.id}.stair`), '.HALF_TURN_STAIR.']);
