@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { estimate } from '../src/cost.mjs';
+import { areas } from '../src/render.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -23,4 +24,14 @@ console.log(`  ${`доставка ${prices.items.delivery[2]} %`.padEnd(46)} ${
 console.log(`  ${`резерв ${Math.round(prices.reserve * 100)} %`.padEnd(46)} ${rub(e.reserve).padStart(28)} ₽`);
 console.log(`  ${'всего'.padEnd(46)} ${rub(e.total).padStart(28)} ₽`);
 console.log(`  ${'на квадрат полезной площади'.padEnd(46)} ${rub(Math.round(e.total / e.useful)).padStart(28)} ₽/м²`);
-console.log(`\n  полезная площадь ${e.useful.toFixed(1)} м² · ${prices.region}, ${prices.date}`);
+const a = areas(house);
+console.log(`\nПЛОЩАДИ`);
+for (const l of a.byLevel)
+  console.log(`  ${l.title.padEnd(16)} жилая ${l.live.toFixed(1).padStart(5)} · бытовая ${l.service.toFixed(1).padStart(5)} · техническая ${l.tech.toFixed(1).padStart(5)} · всего ${l.total.toFixed(1).padStart(5)} м²`);
+console.log(`  ${'—'.repeat(16)} ${a.live.toFixed(1).padStart(11)} · ${a.service.toFixed(1).padStart(13)} · ${a.tech.toFixed(1).padStart(17)} · ${a.total.toFixed(1).padStart(11)} м²`);
+console.log(`\n  ${'жилая площадь'.padEnd(46)} ${a.live.toFixed(1).padStart(11)} м²`);
+console.log(`  ${'без гаража, лестниц и технических'.padEnd(46)} ${a.living.toFixed(1).padStart(11)} м²`);
+console.log(`  ${'всего по полу'.padEnd(46)} ${a.total.toFixed(1).padStart(11)} м²`);
+console.log(`\n  ${'на квадрат жилой'.padEnd(46)} ${rub(Math.round(e.total / a.live)).padStart(11)} ₽/м²`);
+console.log(`  ${'на квадрат без технических'.padEnd(46)} ${rub(Math.round(e.total / a.living)).padStart(11)} ₽/м²`);
+console.log(`\n  ${prices.region}, ${prices.date}`);

@@ -749,6 +749,22 @@ function sysPlace(house, p) {
 }
 
 export function explication(L) {
-  const rows = L.rooms.map(r => ({ n: r.n, name: r.name, area: r.w * r.h / 1e6 }));
-  return { rows, total: rows.reduce((s, r) => s + r.area, 0) };
+  const rows = L.rooms.map(r => ({ n: r.n, name: r.name, use: r.use, area: r.w * r.h / 1e6 }));
+  const by = u => rows.filter(r => r.use === u).reduce((s, r) => s + r.area, 0);
+  return {
+    rows,
+    total: rows.reduce((s, r) => s + r.area, 0),
+    live: by('live'), service: by('service'), tech: by('tech')
+  };
+}
+
+// площади дома по назначению помещений
+export function areas(house) {
+  const e = house.levels.map(explication);
+  const sum = k => e.reduce((s, x) => s + x[k], 0);
+  return {
+    byLevel: house.levels.map((L, i) => ({ title: L.title, ...e[i] })),
+    total: sum('total'), live: sum('live'), service: sum('service'), tech: sum('tech'),
+    living: sum('live') + sum('service')     // без гаража, лестниц и технических
+  };
 }

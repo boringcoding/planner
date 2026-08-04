@@ -2,7 +2,7 @@
 // Как и всё остальное, выводится из data/house.json — площади не хранятся, а считаются.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, explication } from '../src/render.mjs';
+import { renderLevel, renderSystem, explication, areas } from '../src/render.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 import { ifc } from '../src/ifc.mjs';
@@ -34,8 +34,11 @@ const elevs = house.levels.flatMap(L => elevationRooms(L).map(r => ({ L, r, svg:
 const totalUseful = levels.reduce((s, { e }) => s + e.total, 0);
 const footprint = house.shell.w * house.shell.h / 1e6;
 
+const A = areas(house);
 const facts = [
-  ['Полезная площадь', `${m2(totalUseful)} м²`],
+  ['Жилая площадь', `${m2(A.live)} м²`],
+  ['Без технических', `${m2(A.living)} м²`],
+  ['Всего по полу', `${m2(A.total)} м²`],
   ['Пятно застройки', `${m2(footprint)} м²`],
   ['Габарит', `${m2(house.shell.w / 1000)} × ${m2(house.shell.h / 1000)} м`],
   ['Уровней', String(house.levels.length)],
@@ -58,9 +61,12 @@ const sheets = levels.map(({ L, e, svg }) => `
         <caption>Экспликация</caption>
         <thead><tr><th>№</th><th>Помещение</th><th>Площадь</th></tr></thead>
         <tbody>
-          ${e.rows.map(r => `<tr><td class="num">${r.n}</td><td>${esc(r.name)}</td><td class="num">${m2(r.area)} м²</td></tr>`).join('\n          ')}
+          ${e.rows.map(r => `<tr><td class="num">${r.n}</td><td>${esc(r.name)}${r.use === 'live' ? '' : `<span class="use"> · ${r.use === 'service' ? 'бытовое' : 'техническое'}</span>`}</td><td class="num">${m2(r.area)} м²</td></tr>`).join('\n          ')}
         </tbody>
-        <tfoot><tr><td></td><td>Итого полезной</td><td class="num">${m2(e.total)} м²</td></tr></tfoot>
+        <tfoot>
+          <tr><td></td><td>Жилые</td><td class="num">${m2(e.live)} м²</td></tr>
+          <tr><td></td><td>Всего по полу</td><td class="num">${m2(e.total)} м²</td></tr>
+        </tfoot>
       </table>
     </section>`).join('\n');
 
@@ -184,6 +190,7 @@ const html = `<!doctype html>
   .expl td.num { text-align: right; white-space: nowrap; }
   .expl th:last-child { text-align: right; }
   .expl tfoot td { font-weight: 600; border-bottom: none; }
+  .expl .use { color: var(--ink35); font-size: 13px; }
   .brief { padding-top: 72px; }
   .brief h2 { font-size: 24px; margin: 0 0 20px; }
   .brief h3 { font-size: 13px; letter-spacing: 0.09em; text-transform: uppercase;
