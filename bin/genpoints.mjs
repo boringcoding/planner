@@ -21,7 +21,7 @@ const PROG = {
   'cokol.r5': { light: 1, sw: 2 },
   'cokol.r6': { sock: [[1, 300]], light: 1, sw: 2 },
   'cokol.r7': { power: 1, light: 1 },
-  'cokol.r8': { sock: [[4, 300]], light: 2, sw: 2 },
+  'cokol.r8': { sock: [[3, 300]], light: 2, sw: 2 },   // четвёртой розетке в этой комнате места нет: диван, ТВ и две двери
   'first.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 3, sw: 2 },
   'first.r2': { sock: [[1, 1100]], light: 1, sw: 1 },
   'first.r3': { light: 1, sw: 2 },
@@ -63,9 +63,12 @@ function freeSpans(house, L, room, side, z) {
 // разложить n точек по свободным участкам всех граней, начиная с длинных.
 // used — уже занятые места этого помещения: две точки в одной координате
 // на плане сливаются в одну кляксу, даже если по высоте они разные
-function place(house, L, room, n, z, used = []) {
+function place(house, L, room, n, z, used = [], avoid = []) {
   const all = SIDES.flatMap(s => freeSpans(house, L, room, s, z))
     .sort((p, q) => (q.b - q.a) - (p.b - p.a));
+  // прибор высотой 500 закрывает всё, что ниже 800: розетку за ним не достать
+  const behind = pt => z < 800 && avoid.some(r => r.side === pt.side
+    && pt.along > r.along - r.len / 2 - 200 && pt.along < r.along + r.len / 2 + 200);
   const out = [];
   let guard = 0;
   while (out.length < n && guard++ < 40) {
@@ -79,7 +82,7 @@ function place(house, L, room, n, z, used = []) {
       let best = null, bestD = -1;
       for (let pos = sp.a; pos <= sp.b; pos += 100) {
         const pt = { side: sp.side, along: Math.round(pos), z };
-        if (inLabel(room, pt) || tooClose(room, pt, taken)) continue;
+        if (inLabel(room, pt) || tooClose(room, pt, taken) || behind(pt)) continue;
         if (z < 1500 && splash(L, room, pt)) continue;   // зона брызг — про розетки, не про решётки
         const q = at(room, pt);
         const d = taken.length
@@ -105,11 +108,14 @@ function tooClose(room, pt, others, d = 500) {
   return others.some(o => Math.hypot(at(room, o).x - q.x, at(room, o).y - q.y) < d);
 }
 
-// зона брызг: у душа и ванны розетке не место
+// зона брызг: у душа и ванны розетке не место. Душ за стеной соседнего
+// помещения к делу не относится — брызги через стену не летят
 function splash(L, room, pt, d = 700) {
   const q = at(room, pt);
   return (L.furniture || []).some(g => {
     if (g.sym !== 'shower' && g.sym !== 'bath') return false;
+    const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
+    if (cx < room.x || cx > room.x + room.w || cy < room.y || cy > room.y + room.h) return false;
     const dx = Math.max(g.x - q.x, q.x - (g.x + g.w), 0), dy = Math.max(g.y - q.y, q.y - (g.y + g.h), 0);
     return Math.hypot(dx, dy) < d;
   });
@@ -170,20 +176,62 @@ function switches(house, L, room, n, used = []) {
   return out.slice(0, n);
 }
 
-const P = [];
+// Радиаторы считаются раньше розеток: розетка за радиатором на плане
+// выглядит нормально, а на развёртке видно, что вилку туда не воткнуть.
+// Отсюда и порядок — сначала отопление, потом всё, что ниже 800
+function radiators(house, L, room) {
+  const out = [];
+  for (const side of SIDES) {
+    const items = faceItems(house, L, room, side);
+    for (const it of items) {
+      if (it.kind !== 'window') continue;
+      const mid = (it.a + it.b) / 2, len = Math.max(600, it.b - it.a - 200);
+      // под окном может стоять кухонный фронт: радиатор туда не встаёт,
+      // он грел бы шкаф. Такое окно остаётся без радиатора — тепло берут соседние
+      const blocked = items.some(g => g.kind === 'furn' && g.z1 >= 300
+        && Math.min(g.b, mid + len / 2) - Math.max(g.a, mid - len / 2) > 150);
+      if (blocked) continue;
+      out.push({ side, along: Math.round(mid), z: 150, kind: 'radiator', len });
+    }
+  }
+  // помещение без окон радиатора не получило бы вовсе: в цоколе окон нет,
+  // а отапливать его надо. Ставим на самый длинный свободный участок стены
+  const NOHEAT = ['stair', 'wardrobe'];
+  const heated = !NOHEAT.includes(room.tag) && !/Сауна/.test(room.name);
+  if (heated && !out.length) {
+    // самая длинная стена нужна мебели и розеткам, радиатору хватит короткой:
+    // берём наименьший участок, в который он влезает целиком
+    const spans = SIDES.flatMap(x => freeSpans(house, L, room, x, 150))
+      .sort((a, b) => (a.b - a.a) - (b.b - b.a));
+    const sp = spans.find(x => x.b - x.a >= 900) || spans[spans.length - 1];
+    if (sp) {
+      const len = Math.min(1200, Math.max(600, Math.round((sp.b - sp.a) * 0.6)));
+      out.push({ side: sp.side, along: Math.round((sp.a + sp.b) / 2), z: 150, kind: 'radiator', len });
+    }
+  }
+  return out;
+}
+
+const P = [], short = [];
 let seq = { eom: 0, vk: 0, ov: 0, ss: 0 };
 const add = (sys, o) => P.push({ id: `${sys}.p${++seq[sys]}`, sys, ...o });
 
 for (const L of house.levels) {
   for (const room of L.rooms) {
     const prog = PROG[room.id] || {}, used = [];
-    for (const [n, z] of prog.sock || [])
-      for (const p of place(house, L, room, n, z, used)) {
+    const rad = radiators(house, L, room);
+    for (const [n, z] of prog.sock || []) {
+      const got = place(house, L, room, n, z, used, rad);
+      // молча поставить меньше, чем заказано, нельзя: недостающая розетка
+      // на чертеже ничем себя не выдаёт
+      if (got.length < n) short.push(`${room.name} (${L.title}): розеток на ${z} — ${got.length} из ${n}`);
+      for (const p of got) {
         used.push(p);
         add('eom', { level: L.id, room: room.id, ...p, kind: room.tag === 'wet' ? 'socketIP' : 'socket' });
       }
+    }
     for (let i = 0; i < (prog.power || 0); i++) {
-      const p = place(house, L, room, 1, 600, used)[0];
+      const p = place(house, L, room, 1, 600, used, rad)[0];
       if (p) { used.push(p); add('eom', { level: L.id, room: room.id, ...p, kind: 'power' }); }
     }
     for (const p of lights(room, prog.light || 0))
@@ -216,33 +264,8 @@ for (const L of house.levels) {
       });
     }
 
-    // ОВ: радиатор под каждым окном, вытяжка в мокрых и на кухне,
-    // приток в жилых — под потолком
-    for (const side of SIDES) {
-      const items = faceItems(house, L, room, side);
-      for (const it of items) {
-        if (it.kind !== 'window') continue;
-        const mid = (it.a + it.b) / 2, len = Math.max(600, it.b - it.a - 200);
-        // под окном может стоять кухонный фронт: радиатор туда не встаёт,
-        // он грел бы шкаф. Такое окно остаётся без радиатора — тепло берут соседние
-        const blocked = items.some(g => g.kind === 'furn' && g.z1 >= 300
-          && Math.min(g.b, mid + len / 2) - Math.max(g.a, mid - len / 2) > 150);
-        if (blocked) continue;
-        add('ov', { level: L.id, room: room.id, side, along: Math.round(mid), z: 150, kind: 'radiator', len });
-      }
-    }
-    // помещение без окон радиатора не получило бы вовсе: в цоколе окон нет,
-    // а отапливать его надо. Ставим на самый длинный свободный участок стены
-    const NOHEAT = ['stair', 'wardrobe'];
-    const heated = !NOHEAT.includes(room.tag) && !/Сауна/.test(room.name);
-    if (heated && !P.some(x => x.sys === 'ov' && x.kind === 'radiator' && x.room === room.id)) {
-      const sp = SIDES.flatMap(x => freeSpans(house, L, room, x, 150))
-        .sort((a, b) => (b.b - b.a) - (a.b - a.a))[0];
-      if (sp) {
-        const len = Math.min(1200, Math.max(600, Math.round((sp.b - sp.a) * 0.6)));
-        add('ov', { level: L.id, room: room.id, side: sp.side, along: Math.round((sp.a + sp.b) / 2), z: 150, kind: 'radiator', len });
-      }
-    }
+    // ОВ: радиаторы посчитаны выше — до розеток, чтобы те их обошли
+    for (const r of rad) add('ov', { level: L.id, room: room.id, ...r });
 
     const wetish = room.tag === 'wet' || /Кухня|Сауна|Котельная|Гараж/.test(room.name);
     if (wetish || room.tag === 'quiet' || room.tag === 'hall') {
@@ -255,8 +278,9 @@ for (const L of house.levels) {
     const SS = { 'first.r5': ['data', 'tv'], 'second.r2': ['data', 'data'], 'second.r1': ['data'], 'second.r7': ['data', 'tv'], 'cokol.r8': ['data', 'tv'], 'cokol.r2': ['rack'] };
     const usedSS = [];
     for (const k of SS[room.id] || []) {
-      const p = place(house, L, room, 1, k === 'tv' ? 1200 : 300, usedSS)[0];
+      const p = place(house, L, room, 1, k === 'tv' ? 1200 : 300, usedSS, rad)[0];
       if (p) { usedSS.push(p); add('ss', { level: L.id, room: room.id, ...p, kind: k }); }
+      else short.push(`${room.name} (${L.title}): «${k}» ставить некуда`);
     }
     const mid = () => offLabel(room, { x: Math.round(room.x + room.w / 2), y: Math.round(room.y + room.h / 2) });
     if (room.tag === 'wet') add('ss', { level: L.id, room: room.id, ...mid(), z: 0, kind: 'leak' });
@@ -303,3 +327,5 @@ const json = JSON.stringify(out, (k, v) => v, 1)
 fs.writeFileSync(new URL('../data/systems.json', import.meta.url), json + '\n');
 
 for (const s of SYS) console.log(`${s.id}: ${P.filter(p => p.sys === s.id).length} точек`);
+
+for (const s of short) console.log('  недобор: ' + s);

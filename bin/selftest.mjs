@@ -230,7 +230,16 @@ const SCASES = [
            p.x = r.label.x; p.y = r.label.y; }],
 
   ['идентификатор точки повторился', /повторяется/,
-    d => { const s = sys(d, 'eom').points; s[1].id = s[0].id; }]
+    d => { const s = sys(d, 'eom').points; s[1].id = s[0].id; }],
+
+  ['розетка за радиатором', /стоит за радиатором/,
+    d => { const r = sys(d, 'ov').points.find(x => x.kind === 'radiator' && x.room === 'first.r5');
+           const p = sys(d, 'eom').points.find(x => x.room === 'first.r5' && x.z === 300);
+           p.side = r.side; p.along = r.along; }],
+
+  ['на развёртке подписи некуда встать', /некуда встать|наезжают/,
+    d => { const s = sys(d, 'eom'); const p = s.points.find(x => x.room === 'cokol.r7' && x.side);
+           for (let i = 1; i <= 8; i++) s.points.push({ ...p, id: `eom.x${i}` }); }]
 ];
 
 const base = check(house, brief);

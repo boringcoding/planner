@@ -57,10 +57,92 @@ function pill(x, y, t, color, scale = 1) {
     + txt(x, y + 76 * scale, t, 190 * scale, color);
 }
 
-export function renderElevation(house, L, room, systems = []) {
+const ADV = 0.60;                                        // ширина знака моноширинного шрифта
+const textRect = (x, y, t, fs, left) => ({ x: left ? x : x - t.length * fs * ADV / 2, y: y - fs * 0.8, w: t.length * fs * ADV, h: fs });
+const pillRect = (x, y, t) => { const h = 300, w = Math.max(h, t.length * 130 + 150); return { x: x - w / 2, y: y - h / 2, w, h }; };
+const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+// Раскладка развёртки считается один раз: по ней рисуется лист и её же
+// проверяет правило. Метка раздела стоит на своей отметке — двигать её
+// нельзя, поэтому от неё уходит подпись предмета: она поднимается над
+// контуром, пока не найдёт свободное место. Не нашла — лист переполнен,
+// и об этом должно сказать правило, а не молчащий чертёж
+export function elevLayout(house, L, room, systems = []) {
   const per = perimeter(room), H = L.clear, off = offsets(room);
+  const Z = z => H - z;
+  const shapes = [], pills = [], caps = [], marks = [];
+
+  for (const side of SIDES) {
+    const x0 = off[side];
+    for (const it of faceItems(house, L, room, side, 260)) {
+      const x = x0 + it.a, w = it.b - it.a;
+      if (it.kind === 'furn') {
+        if (!it.z1) continue;
+        shapes.push({ kind: 'furn', x, y: Z(it.z1), w, h: it.z1 });
+        const nm = it.l || NAME[it.sym] || '';
+        if (nm) caps.push({ t: nm, x: x + w / 2, top: Z(it.z1) - 120, fs: 210, owner: it.id || nm });
+      } else if (it.kind === 'window') {
+        shapes.push({ kind: 'window', x, y: Z(it.z1), w, h: it.z1 - it.z0 });
+        caps.push({ t: `${w} · низ ${it.z0}`, x: x + w / 2, top: Z(it.z1) - 120, fs: 200, owner: it.id });
+      } else {
+        shapes.push({ kind: it.kind, x, y: Z(it.z1), w, h: it.z1, dash: it.kind === 'pass' });
+        caps.push({ t: `${w} × ${it.z1}`, x: x + w / 2, top: Z(it.z1) - 120, fs: 200, owner: it.id });
+      }
+    }
+  }
+
+  for (const sys of systems) {
+    const color = SYS_C[sys.id] || C.ink;
+    for (const p of sys.points) {
+      if (p.room !== room.id || p.level !== L.id || !p.side) continue;
+      const x = off[p.side] + p.along, y = Z(p.z);
+      if (p.kind === 'radiator') { shapes.push({ kind: 'radiator', x: x - p.len / 2, y: Z(p.z + 500), w: p.len, h: 500, color }); continue; }
+      let dy = 0;                                        // одинаковые места разводим по вертикали
+      while (pills.some(q => Math.abs(q.x - x) < 340 && Math.abs(q.y - (y + dy)) < 340)) dy -= 360;
+      pills.push({ t: GLYPH[p.kind] || '?', x, y: y + dy, color, owner: p.id, z: p.z });
+    }
+  }
+
+  // отметка пишется только там, где ей есть место: подписанная поверх
+  // соседней метки цифра мешает больше, чем помогает. Решается это после
+  // того, как расставлены все метки, — сосед справа появляется позже
+  const pb = pills.map(q => pillRect(q.x, q.y, q.t));
+  pills.forEach((p, i) => {
+    const m = { t: String(p.z), x: pb[i].x + pb[i].w + 60, y: p.y + 70, fs: 180, owner: p.owner, left: true };
+    const r = textRect(m.x, m.y, m.t, m.fs, true);
+    if (pb.some(q => hit(r, q)) || marks.some(o => hit(r, textRect(o.x, o.y, o.t, o.fs, true)))) return;
+    marks.push(m);
+  });
+
+  // подписи предметов уходят вверх от меток и друг от друга
+  const taken = pills.map(q => pillRect(q.x, q.y, q.t))
+    .concat(marks.map(m => textRect(m.x, m.y, m.t, m.fs, true)));
+  for (const c of caps) {
+    c.y = c.top;
+    for (let step = 0; step < 6; step++) {
+      const r = textRect(c.x, c.y, c.t, c.fs);
+      if (!taken.some(q => hit(r, q))) { taken.push(r); c.fitted = true; break; }
+      c.y -= 300;
+    }
+  }
+  return { per, H, off, Z, shapes, pills, caps, marks };
+}
+
+// рамки всех подписей листа: правило смотрит те же прямоугольники,
+// по которым чертёж и рисуется
+export function elevBoxes(house, L, room, systems = []) {
+  const g = elevLayout(house, L, room, systems);
+  return [
+    ...g.pills.map(p => ({ ...pillRect(p.x, p.y, p.t), kind: 'метка', owner: p.owner, fitted: true })),
+    ...g.marks.map(m => ({ ...textRect(m.x, m.y, m.t, m.fs, true), kind: 'отметка', owner: m.owner, fitted: true })),
+    ...g.caps.map(c => ({ ...textRect(c.x, c.y, c.t, c.fs), kind: 'подпись', owner: c.owner, fitted: !!c.fitted }))
+  ];
+}
+
+export function renderElevation(house, L, room, systems = []) {
+  const g = elevLayout(house, L, room, systems);
+  const { per, H, off, Z } = g;
   const padL = 1500, padR = 900, padT = 1500, padB = 2100;
-  const Z = z => H - z;                                  // отметка вверх
 
   let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-padL} ${-padT} ${per + padL + padR} ${H + padT + padB}" font-family="IBM Plex Sans,system-ui,sans-serif">`;
   s += `<rect x="${-padL}" y="${-padT}" width="${per + padL + padR}" height="${H + padT + padB}" fill="${C.paper}"/>`;
@@ -79,51 +161,19 @@ export function renderElevation(house, L, room, systems = []) {
   for (const [z, t] of [[0, '0'], [H, String(H)]])
     s += txt(-200, Z(z) + 90, t, 240, C.ink60, 'end');
 
-  // проёмы, окна, мебель
-  for (const side of SIDES) {
-    const x0 = off[side];
-    for (const it of faceItems(house, L, room, side, 260)) {
-      const x = x0 + it.a, w = it.b - it.a;
-      if (it.kind === 'furn') {
-        if (!it.z1) continue;
-        s += box(x, Z(it.z1), w, it.z1, C.furn, 45, C.furnFill);
-        const nm = it.l || NAME[it.sym] || '';
-        if (nm) s += txt(x + w / 2, Z(it.z1) - 120, nm, 210, C.ink60);
-      } else if (it.kind === 'window') {
-        s += box(x, Z(it.z1), w, it.z1 - it.z0, C.ink, 60, C.glass);
-        s += txt(x + w / 2, Z(it.z1) - 120, `${w} · низ ${it.z0}`, 200, C.ink60);
-      } else {
-        const dash = it.kind === 'pass' ? '200 160' : null;
-        s += box(x, Z(it.z1), w, it.z1, C.ink, 60, C.room);
-        if (dash) s += line(x, Z(it.z1), x + w, Z(it.z1), C.paper, 70, dash);
-        s += txt(x + w / 2, Z(it.z1) - 120, `${w} × ${it.z1}`, 200, C.ink60);
-      }
+  // проёмы, окна, мебель, радиаторы
+  for (const sh of g.shapes) {
+    if (sh.kind === 'furn') s += box(sh.x, sh.y, sh.w, sh.h, C.furn, 45, C.furnFill);
+    else if (sh.kind === 'window') s += box(sh.x, sh.y, sh.w, sh.h, C.ink, 60, C.glass);
+    else if (sh.kind === 'radiator') s += box(sh.x, sh.y, sh.w, sh.h, sh.color, 50, C.room);
+    else {
+      s += box(sh.x, sh.y, sh.w, sh.h, C.ink, 60, C.room);
+      if (sh.dash) s += line(sh.x, sh.y, sh.x + sh.w, sh.y, C.paper, 70, '200 160');
     }
   }
-
-  // точки разделов
-  const placed = [];
-  for (const sys of systems) {
-    const color = SYS_C[sys.id] || C.ink;
-    for (const p of sys.points) {
-      if (p.room !== room.id || p.level !== L.id) continue;
-      let x, y = Z(p.z);
-      if (p.side) x = off[p.side] + p.along;
-      else continue;                                     // потолочные — на плане, не на развёртке
-      if (p.kind === 'radiator') {
-        s += box(x - p.len / 2, Z(p.z + 500), p.len, 500, color, 50, C.room);
-        continue;
-      }
-      let dy = 0;                                         // одинаковые места разводим по вертикали
-      while (placed.some(q => Math.abs(q.x - x) < 340 && Math.abs(q.y - (y + dy)) < 340)) dy -= 360;
-      s += pill(x, y + dy, GLYPH[p.kind] || '?', color);
-      // отметка пишется только там, где ей есть место: подписанная поверх
-      // соседней метки цифра мешает больше, чем помогает
-      const free = !placed.some(q => q.x > x && q.x - x < 900 && Math.abs(q.y - (y + dy)) < 260);
-      placed.push({ x, y: y + dy });
-      if (free) s += txt(x + 260, y + dy + 70, String(p.z), 180, C.ink35, 'start');
-    }
-  }
+  for (const c of g.caps) s += txt(c.x, c.y, c.t, c.fs, C.ink60);
+  for (const p of g.pills) s += pill(p.x, p.y, p.t, p.color);
+  for (const m of g.marks) s += txt(m.x, m.y, m.t, m.fs, C.ink35, 'start');
 
   s += txt(0, H + 700, `${room.name} · развёртка · ${L.title}`, 300, C.ink, 'start', false);
   s += txt(0, H + 1180, `периметр ${per} · h ${H}`, 250, C.ink60, 'start');

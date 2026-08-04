@@ -5,6 +5,7 @@
 import { face, faceItems, SIDES } from './model.mjs';
 import { KIND, place, reach, bill } from './systems.mjs';
 import { roomBlock } from './render.mjs';
+import { elevBoxes, elevationRooms } from './elev.mjs';
 
 export const SLIMITS = {
   swZ: [800, 1100],     // высота выключателя
@@ -14,7 +15,8 @@ export const SLIMITS = {
   minGapZ: 800,         // ...если они ещё и на одной высоте: решётка над
                         // радиатором стоит там же, но путать их нечем
   socketZ: [100, 1300], // высота розетки
-  radiatorZ: 400        // низ радиатора
+  radiatorZ: 400,       // низ радиатора
+  radiatorH: 500        // высота радиатора: ниже неё за ним ничего не ставится
 };
 
 const WET_SYM = new Set(['shower', 'bath']);
@@ -169,5 +171,36 @@ export function checkSystems(house, data) {
     const b = bill(house, sys);
     if (!b.total) E('ведомость пуста');
   }
+
+  // 11. за радиатором точек нет. На плане розетка рядом с радиатором
+  // выглядит нормально: они на одной стене и не совпадают. На развёртке
+  // видно, что она в габарите прибора — вилку туда не воткнуть
+  const rads = data.systems.flatMap(s => s.points).filter(p => p.kind === 'radiator');
+  for (const sys of data.systems)
+    for (const p of sys.points) {
+      if (p.kind === 'radiator' || !p.side) continue;
+      for (const r of rads) {
+        if (r.level !== p.level || r.room !== p.room || r.side !== p.side) continue;
+        if (p.z > r.z + SLIMITS.radiatorH) continue;
+        if (Math.abs(p.along - r.along) > r.len / 2) continue;
+        errs.push(`${sys.id.toUpperCase()}: ${p.id} (${p.kind}) стоит за радиатором ${r.id}`);
+      }
+    }
+
+  // 12. подписи развёртки не наезжают друг на друга. Метка раздела стоит
+  // на своей отметке, подпись предмета от неё уходит вверх — но места
+  // может не хватить, и тогда «700 · низ 1500» ляжет поверх «ВЫ»
+  for (const L of house.levels)
+    for (const room of elevationRooms(L)) {
+      const bx = elevBoxes(house, L, room, data.systems);
+      for (const c of bx)
+        if (!c.fitted) errs.push(`развёртка «${room.name}» (${L.title}): подписи «${c.owner}» некуда встать`);
+      for (let i = 0; i < bx.length; i++)
+        for (let j = i + 1; j < bx.length; j++) {
+          const a = bx[i], c = bx[j];
+          if (a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h)
+            errs.push(`развёртка «${room.name}» (${L.title}): ${a.kind} «${a.owner}» и ${c.kind} «${c.owner}» наезжают`);
+        }
+    }
   return errs;
 }
