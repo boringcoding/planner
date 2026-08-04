@@ -114,13 +114,14 @@ const CASES = [
     h => { room(h, 'first', 'Гараж').h += 250; }],
 
   ['подпись помещения наехала на вентшахту', /наезжает на мебель/,
-    h => { room(h, 'second', 'Коридор').label.x = 4300; }],
+    h => { const l = room(h, 'second', 'Коридор').label; l.x = 7100; l.y = 6360; }],
 
   ['подпись мебели наехала на шахту', /наезжает на шахту/,
-    h => { const f = furn(h, 'cokol', 'стеллаж'); f.x = 3900; f.w = 900; }],
+    h => { const f = furn(h, 'cokol', 'стеллаж'); f.x = 6700; f.w = 600; f.y = 5650; }],
 
   ['мебель встала на вентшахту', /стоит на вентшахте/,
-    h => { lvl(h, 'cokol').furniture.find(f => f.l === 'стеллаж').y = 6000; }],
+    h => { const f = lvl(h, 'cokol').furniture.find(x => x.l === 'стеллаж');
+           f.x = 6900; f.w = 600; f.y = 6100; f.lup = true; }],
 
   ['вентшахта разъехалась по уровням', /вентшахт\) не совпадает/,
     h => { lvl(h, 'second').ducts[0].x += 300; }],
@@ -151,6 +152,14 @@ const CASES = [
 
   ['жилая комната с щелью вместо окна', /остекление/,
     h => { lvl(h, 'second').windows.forEach(w => { if (!w.kind) w.hz = 300; }); }],
+
+  ['мебель разрезала пол пополам', /свободный пол разрезан/,
+    h => { const f = lvl(h, 'second').furniture.find(x => x.id === 'second.f5');
+           f.x = 4350; f.w = 2800; f.y = 2600; f.h = 700; }],
+
+  ['стеллаж отгородил дверь', /не подойти телом/,
+    h => { const f = furn(h, 'cokol', 'стеллаж');
+           f.x = 4200; f.y = 3620; f.w = 3300; f.h = 500; }],
 ];
 
 // правила разделов: ломается data/systems.json, дом остаётся прежним
@@ -162,7 +171,7 @@ const SCASES = [
     d => { kind(d, 'eom', 'socket').along = 99000; }],
 
   ['розетка в дверном проёме', /попадает в проём/,
-    d => { const p = sys(d, 'eom').points.find(x => x.id === 'eom.p60'); p.side = 'S'; p.along = 950; }],
+    d => { const p = sys(d, 'eom').points.find(x => x.id === 'eom.p60'); p.side = 'S'; p.along = 4650; }],
 
   ['розетка под потолком', /розетка на отметке/,
     d => { kind(d, 'eom', 'socket').z = 2400; }],
@@ -182,7 +191,7 @@ const SCASES = [
 
   ['радиатор не под окном', /радиатор не под окном/,
     d => { const p = sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator');
-           p.side = 'N'; p.along = 200; }],
+           p.side = 'W'; p.along = 2000; }],
 
   ['радиатор шире окна', /длиннее окна/,
     d => { sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator').len = 4000; }],
@@ -192,7 +201,7 @@ const SCASES = [
 
   ['радиатор за мебелью', /радиатор перекрыт мебелью/,
     d => { const p = sys(d, 'ov').points.find(x => x.room === 'first.r5' && x.kind === 'radiator');
-           p.side = 'N'; p.along = 5600; p.len = 1400; }],
+           p.side = 'N'; p.along = 4000; p.len = 1400; }],
 
   ['помещение осталось без света', /без светильника/,
     d => { const s = sys(d, 'eom'); s.points = s.points.filter(p => !(p.kind === 'light' && p.room === 'second.r7')); }],

@@ -27,7 +27,9 @@ export const LIMITS = {
   labelClear: 30,          // допуск при проверке подписей на наложение
   tallMin: 1200,           // с этой высоты предмет считается высоким
   doorHzMin: 1900,         // высота дверного проёма
-  glazingRatio: 8          // площадь остекления жилой комнаты — не меньше 1/8 пола
+  glazingRatio: 8,         // площадь остекления жилой комнаты — не меньше 1/8 пола
+  body: 550,               // ширина тела, которым проверяется проходимость пола
+  nook: 0.5e6              // клочок свободного пола мельче — щель, а не проход
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -48,6 +50,7 @@ const inter = (a, b) => rect(
 const overlap = (a, b) => { const i = inter(a, b); return i.w > 0 && i.h > 0 ? i.w * i.h : 0; };
 const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 const shrink = (r, m) => rect(r.x + m, r.y + m, r.w - 2 * m, r.h - 2 * m);
+const grow = (r, mx, my = mx) => rect(r.x - mx, r.y - my, r.w + 2 * mx, r.h + 2 * my);
 const openingRect = o => o.dir === 'h' ? rect(o.x, o.y, o.w, o.t) : rect(o.x, o.y, o.t, o.w);
 const stairRun = st => { const g = stairGeom(st); return rect(g.runX0, st.y, g.run, st.h); };
 const stairLanding = st => { const g = stairGeom(st); return rect(g.landX0, st.y, g.landing, st.h); };
@@ -100,6 +103,52 @@ function tiling(inner, rooms, walls) {
       if (r >= 0 && w >= 0) over.push({ cell, room: rooms[r] });
     }
   return { free, over };
+}
+
+// Свободный пол помещения, разложенный по клеткам 50 мм: клетка проходима,
+// если тело шириной LIMITS.body, поставленное в её центр, не задевает ни
+// стену помещения, ни предмет. Дальше заливка — и станет видно, что пол
+// распался на карманы. Закуток мельче LIMITS.nook — не проход, а щель,
+// и в связности он не участвует
+function passable(r, obst) {
+  const S = 50, m = LIMITS.body / 2;
+  const nx = Math.floor(r.w / S), ny = Math.floor(r.h / S);
+  const at = (i, j) => [r.x + i * S + S / 2, r.y + j * S + S / 2];
+  const free = (i, j) => {
+    const [x, y] = at(i, j);
+    if (x - m < r.x || x + m > r.x + r.w || y - m < r.y || y + m > r.y + r.h) return false;
+    return !obst.some(o => x + m > o.x && x - m < o.x + o.w && y + m > o.y && y - m < o.y + o.h);
+  };
+  const id = new Int32Array(nx * ny).fill(-1), size = [];
+  let comp = 0;
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+    if (id[i * ny + j] >= 0 || !free(i, j)) continue;
+    const st = [[i, j]]; id[i * ny + j] = comp;
+    let n = 0;
+    while (st.length) {
+      const [a, b] = st.pop(); n++;
+      for (const [da, db] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const p = a + da, q = b + db;
+        if (p < 0 || q < 0 || p >= nx || q >= ny || id[p * ny + q] >= 0 || !free(p, q)) continue;
+        id[p * ny + q] = comp; st.push([p, q]);
+      }
+    }
+    size[comp++] = n * S * S;
+  }
+  return {
+    touch(z) {
+      const hit = new Set();
+      const i0 = Math.max(0, Math.floor((z.x - r.x) / S)), i1 = Math.min(nx - 1, Math.ceil((z.x + z.w - r.x) / S));
+      const j0 = Math.max(0, Math.floor((z.y - r.y) / S)), j1 = Math.min(ny - 1, Math.ceil((z.y + z.h - r.y) / S));
+      for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+        const c = id[i * ny + j];
+        if (c < 0 || size[c] < LIMITS.nook) continue;
+        const [x, y] = at(i, j);
+        if (x > z.x && x < z.x + z.w && y > z.y && y < z.y + z.h) hit.add(c);
+      }
+      return [...hit];
+    }
+  };
 }
 
 function clearZone(f, shell) {
@@ -483,6 +532,34 @@ export function check(house, brief) {
         });
         if (!hit) E(L, `отметка ${v} в цепочке ${axis} не совпадает ни с одной осью стены`);
       }
+    }
+
+    // 29. свободный пол помещения связен: от каждого проёма до каждого
+    // предмета можно пройти телом 550 мм, не переступая через мебель.
+    // Попарные проходы этого не ловят: каждый зазор по отдельности шире
+    // нормы, а вместе они образуют два кармана без связи между собой
+    for (const r of rooms) {
+      if (r.tag === 'stair') continue;
+      const obst = [...furn.map(box), L.riser, ...(L.ducts || []),
+      ...(L.flues || []).filter(f => !f.outside)].filter(Boolean);
+      const cells = passable(r, obst);
+      // зона подхода растягивается только поперёк проёма: растянутая вдоль,
+      // она обошла бы торец стены и «привязала» бы к помещению чужую дверь
+      const across = (o, d) => o.dir === 'h' ? grow(openingRect(o), 0, d) : grow(openingRect(o), d, 0);
+      const anchors = [
+        ...opens.map(o => ({ id: `проём ${o.id}`, own: across(o, 200), z: across(o, 600) })),
+        ...wins.filter(w => w.kind === 'entrance' || w.kind === 'door')
+          .map(w => ({ id: `дверь ${w.id}`, own: windowBand(w, S, 200), z: windowBand(w, S, 900) })),
+        ...furn.map(f => ({ id: `«${f.l || f.sym || f.id}»`, own: box(f), z: grow(box(f), 400) }))
+      ].filter(a => overlap(a.own, r) > 1000);
+      const comps = anchors.map(a => ({ ...a, c: cells.touch(a.z) }));
+      const lost = comps.filter(a => !a.c.length);
+      const all = new Set(comps.flatMap(a => a.c));
+      if (lost.length)
+        E(L, `«${r.name}»: к ${lost[0].id} не подойти телом ${LIMITS.body} мм`);
+      else if (all.size > 1)
+        E(L, `«${r.name}»: свободный пол разрезан на ${all.size} части — ` +
+          `${comps.filter(a => a.c[0] !== comps[0].c[0]).map(a => a.id).join(', ')} в отдельной`);
     }
 
     // 20. ни одна подпись листа не наезжает на другую
