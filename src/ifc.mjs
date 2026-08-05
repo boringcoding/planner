@@ -283,7 +283,7 @@ export function ifc(house, systems = [], opt = {}) {
       const op = openingIn(host, w.id, wx, wy, width, w.sill || 0, w.hz);
       const isDoor = w.kind === 'entrance' || w.kind === 'door' || w.kind === 'gate';
       fill(s, op, w.id, isDoor ? 'door' : 'window',
-        w.kind === 'gate' ? 'Ворота' : isDoor ? 'Наружная дверь' : 'Окно', width, w.hz, host.th - 60);
+        w.kind === 'gate' ? 'Ворота' : isDoor ? 'Наружная дверь' : w.kind === 'hatch' ? 'Люк' : 'Окно', width, w.hz, host.th - 60);
       addProps(op.op, `op:${w.id}`, [['id', w.id], ['kind', w.kind || 'window'], ['sill', w.sill || 0]]);
     }
   }
@@ -427,7 +427,8 @@ export function ifc(house, systems = [], opt = {}) {
     cold: ['IFCVALVE', '.ISOLATING.', 'Подводка ХВС'],
     hot: ['IFCVALVE', '.ISOLATING.', 'Подводка ГВС'],
     drain: ['IFCWASTETERMINAL', '.FLOORTRAP.', 'Выпуск канализации'],
-    radiator: ['IFCSPACEHEATER', '.CONVECTOR.', 'Радиатор'],
+    radiator: ['IFCSPACEHEATER', '.RADIATOR.', 'Радиатор'],
+    convector: ['IFCSPACEHEATER', '.CONVECTOR.', 'Конвектор внутрипольный'],
     supply: ['IFCAIRTERMINAL', '.DIFFUSER.', 'Приток'],
     exhaust: ['IFCAIRTERMINAL', '.GRILLE.', 'Вытяжка'],
     data: ['IFCOUTLET', '.DATAOUTLET.', 'RJ45'],
@@ -452,6 +453,7 @@ export function ifc(house, systems = [], opt = {}) {
       } else continue;
       const [type, pd, name] = MEP[p.kind] || ['IFCBUILDINGELEMENTPROXY', '.NOTDEFINED.', p.kind];
       const size = p.kind === 'radiator' ? [p.len || 800, 120, 500]
+        : p.kind === 'convector' ? [p.len || 800, 250, 120]
         : p.kind === 'supply' || p.kind === 'exhaust' ? [200, 200, 200] : [120, 120, 120];
       const pl = place(s.pl, x, Y(y), Math.max(0, p.z - size[2] / 2));
       const args = [G(`mep:${p.id}`), owner, str(name), '$', '$', pl,

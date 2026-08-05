@@ -16,7 +16,8 @@ export const SLIMITS = {
                         // радиатором стоит там же, но путать их нечем
   socketZ: [100, 1300], // высота розетки
   radiatorZ: 400,       // низ радиатора
-  radiatorH: 500        // высота радиатора: ниже неё за ним ничего не ставится
+  radiatorH: 500,       // высота радиатора: ниже неё за ним ничего не ставится
+  sillRadiator: 700     // подоконник ниже — радиатор не встаёт, нужен конвектор в полу
 };
 
 const WET_SYM = new Set(['shower', 'bath']);
@@ -85,19 +86,26 @@ export function checkSystems(house, data) {
         }
 
         // 5. радиатор не длиннее своего окна и стоит под ним
-        if (p.kind === 'radiator') {
+        if (p.kind === 'radiator' || p.kind === 'convector') {
+          const dev = p.kind === 'convector' ? 'конвектор' : 'радиатор';
           // под окном — там, где окна есть. В цоколе окон нет вовсе,
           // и радиатор там встаёт на свободную стену, а не «не туда»
           const hasWin = SIDES.some(sd => faceItems(house, L, room, sd).some(i => i.kind === 'window'));
           const win = items.find(it => it.kind === 'window'
             && p.along > it.a - 400 && p.along < it.b + 400);
-          if (!win && hasWin) E(`${tag}: радиатор не под окном`);
-          else if (win && p.len > win.b - win.a) E(`${tag}: радиатор ${p.len} длиннее окна ${win.b - win.a}`);
+          if (!win && hasWin) E(`${tag}: ${dev} не под окном`);
+          else if (win && p.len > win.b - win.a) E(`${tag}: ${dev} ${p.len} длиннее окна ${win.b - win.a}`);
+          // подоконник ниже верха радиатора — прибор упирается в стекло.
+          // Панорамное окно греется конвектором в полу, и наоборот
+          if (win && win.z0 < SLIMITS.sillRadiator && p.kind === 'radiator')
+            E(`${tag}: подоконник ${win.z0} ниже ${SLIMITS.sillRadiator} — под таким окном конвектор в полу, а не радиатор`);
+          if (win && win.z0 >= SLIMITS.sillRadiator && p.kind === 'convector')
+            E(`${tag}: под окном с подоконником ${win.z0} хватает радиатора`);
           // мебель перед радиатором — это отопление шкафа, а не помещения
           for (const it of items) {
             if (it.kind !== 'furn' || it.z1 < 300) continue;
             const ov = Math.min(it.b, p.along + p.len / 2) - Math.max(it.a, p.along - p.len / 2);
-            if (ov > 150) E(`${tag}: радиатор перекрыт мебелью ${it.l || it.sym} на ${Math.round(ov)} мм`);
+            if (ov > 150) E(`${tag}: ${dev} перекрыт мебелью ${it.l || it.sym} на ${Math.round(ov)} мм`);
           }
         }
       }
@@ -153,7 +161,7 @@ export function checkSystems(house, data) {
           // помещение, открытое проёмом без полотна, отапливается вместе с соседним
           const open = (L.openings || []).some(o => o.kind === 'pass'
             && o.x > r.x - 300 && o.x < r.x + r.w + 300 && o.y > r.y - 300 && o.y < r.y + r.h + 300);
-          if (!['stair', 'wardrobe'].includes(r.tag) && !has(r.id, 'radiator') && !own && !open)
+          if (!['stair', 'wardrobe'].includes(r.tag) && !has(r.id, 'radiator') && !has(r.id, 'convector') && !own && !open)
             E(`«${r.name}» (${L.title}) ничем не отапливается`);
         }
       }

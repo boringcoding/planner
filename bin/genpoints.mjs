@@ -14,29 +14,32 @@ const house = JSON.parse(fs.readFileSync(new URL('../data/house.json', import.me
 
 // сколько розеток и на какой высоте, сколько светильников и выключателей
 const PROG = {
-  'cokol.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 2, sw: 1 },
-  'cokol.r2': { sock: [[4, 1100]], light: 1, sw: 1 },
-  'cokol.r3': { sock: [[2, 300]], light: 1, sw: 1 },
-  'cokol.r4': { sock: [[2, 1100]], light: 1, sw: 1 },
+  'cokol.r2': { sock: [[4, 1100]], power: 1, light: 1, sw: 1 },      // котельная
+  'cokol.r9': { light: 1, sw: 1 },                                    // дровяник
+  'cokol.r7': { power: 1, light: 1 },                                 // сауна
+  'cokol.r3': { sock: [[2, 300]], light: 1, sw: 1 },                  // кладовая
+  'cokol.r8': { sock: [[4, 300]], light: 2, sw: 2 },                  // зона отдыха
   'cokol.r5': { light: 1, sw: 2 },
   'cokol.r6': { sock: [[1, 300]], light: 1, sw: 2 },
-  'cokol.r7': { power: 1, light: 1 },
-  'cokol.r8': { sock: [[3, 300]], light: 2, sw: 2 },   // четвёртой розетке в этой комнате места нет: диван, ТВ и две двери
+  'cokol.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 2, sw: 1 },   // мастерская
+  'cokol.r4': { sock: [[2, 1100]], light: 1, sw: 1 },                 // душевая
   'first.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 3, sw: 2 },
-  'first.r2': { sock: [[1, 1100]], light: 1, sw: 1 },
   'first.r3': { light: 1, sw: 2 },
   'first.r4': { sock: [[1, 300]], light: 1, sw: 2 },
+  'first.r6': { light: 1, sw: 2 },                                    // тамбур
+  'first.r2': { sock: [[1, 1100]], light: 1, sw: 1 },
+  'first.r7': { light: 1, sw: 1 },                                    // кладовая при кухне
   'first.r5': { sock: [[6, 1100], [4, 300]], power: 1, light: 4, sw: 3 },
-  'second.r1': { sock: [[4, 300]], light: 1, sw: 1 },
+  'second.r1': { sock: [[4, 300], [2, 1100]], light: 2, sw: 2 },
   'second.r2': { sock: [[4, 300], [2, 1100]], light: 2, sw: 1 },
-  'second.r3': { sock: [[2, 300]], light: 2, sw: 2 },
-  'second.r4': { sock: [[1, 1100]], light: 1, sw: 1 },
+  'second.r6': { sock: [[2, 300]], light: 2, sw: 3 },                 // холл
   'second.r5': { light: 1, sw: 1 },
-  'second.r6': { sock: [[1, 300]], light: 1, sw: 2 },
+  'second.r8': { sock: [[1, 300]], light: 1, sw: 1 },
   'second.r7': { sock: [[4, 300], [2, 700]], light: 1, sw: 2 },
-  'second.r8': { sock: [[1, 300]], light: 1, sw: 1 }
+  'second.r4': { sock: [[1, 1100]], light: 1, sw: 1 }
 };
 
+const SILL_RADIATOR = 700;   // ниже этого подоконника радиатор под окно не встаёт
 const MARGIN = 350;   // от угла и от края проёма: иначе метки лезут друг на друга
 const STEP = 700;     // минимум между точками на одной грани
 
@@ -67,7 +70,7 @@ function place(house, L, room, n, z, used = [], avoid = []) {
   const all = SIDES.flatMap(s => freeSpans(house, L, room, s, z))
     .sort((p, q) => (q.b - q.a) - (p.b - p.a));
   // прибор высотой 500 закрывает всё, что ниже 800: розетку за ним не достать
-  const behind = pt => z < 800 && avoid.some(r => r.side === pt.side
+  const behind = pt => z < 800 && avoid.some(r => r.kind === 'radiator' && r.side === pt.side
     && pt.along > r.along - r.len / 2 - 200 && pt.along < r.along + r.len / 2 + 200);
   const out = [];
   let guard = 0;
@@ -191,7 +194,10 @@ function radiators(house, L, room) {
       const blocked = items.some(g => g.kind === 'furn' && g.z1 >= 300
         && Math.min(g.b, mid + len / 2) - Math.max(g.a, mid - len / 2) > 150);
       if (blocked) continue;
-      out.push({ side, along: Math.round(mid), z: 150, kind: 'radiator', len });
+      // под панорамным окном радиатор не помещается: подоконник ниже его верха.
+      // Там ставится внутрипольный конвектор — это решение, а не мелочь
+      const kind = it.z0 < SILL_RADIATOR ? 'convector' : 'radiator';
+      out.push({ side, along: Math.round(mid), z: kind === 'convector' ? 0 : 150, kind, len });
     }
   }
   // помещение без окон радиатора не получило бы вовсе: в цоколе окон нет,

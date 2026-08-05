@@ -24,7 +24,7 @@ const furn = (h, id, key) => lvl(h, id).furniture.find(f => f.l === key || f.sym
 
 const CASES = [
   ['помещение за оболочкой', /выходит за внутренний габарит/,
-    h => { room(h, 'first', 'Прихожая').x += 500; }],
+    h => { room(h, 'cokol', 'Котельная').x -= 200; }],
 
   ['два помещения внахлёст', /наложение/,
     h => { room(h, 'second', 'Кабинет').x -= 400; }],
@@ -81,7 +81,7 @@ const CASES = [
     h => { furn(h, 'cokol', 'щит').l = 'вводно-распределительное'; }],
 
   ['жилая комната без окна', /без естественного света/,
-    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 900) && !(w.side === 'W' && w.a === 1800)); }],
+    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 600) && !(w.side === 'W' && w.a === 3200)); }],
 
   ['помещение без назначения', /назначение .* не из списка/,
     h => { room(h, 'second', 'Кабинет').use = 'office'; }],
@@ -90,7 +90,28 @@ const CASES = [
     h => { room(h, 'second', 'Холл').w = 700; }],
 
   ['из гаража прямо в дом', /нужен тамбур/,
-    h => { room(h, 'first', 'Прихожая').tag = 'hall'; }],
+    h => { room(h, 'first', 'Тамбур').tag = 'hall'; }],
+
+  ['стекла больше нормы', /больше предела/,
+    h => { lvl(h, 'second').windows.find(w => w.id === 'second.g8').b = 6000; }],
+
+  ['окна этажа вразнобой по верху', /у остальных окон этажа/,
+    h => { lvl(h, 'second').windows.find(w => w.id === 'second.g1').sill = 1000; }],
+
+  ['панорамное окно не помечено', /его помечают pano/,
+    h => { delete lvl(h, 'second').windows.find(w => w.id === 'second.g7').pano; }],
+
+  ['окно санузла на уровне глаз', /подоконник \d+ ниже/,
+    h => { lvl(h, 'second').windows.find(w => w.id === 'second.g6').sill = 900; }],
+
+  ['люк для дров у пола', /люк .* подоконник/,
+    h => { lvl(h, 'cokol').windows.find(w => w.kind === 'hatch').sill = 600; }],
+
+  ['люк ведёт в жилое', /не техническое помещение/,
+    h => { room(h, 'cokol', 'Дровяник').use = 'live'; }],
+
+  ['вход сразу в прихожую', /нужен тамбур/,
+    h => { room(h, 'first', 'Тамбур').tag = 'store'; }],
 
   ['машину убрали из гаража', /машин в гараже/,
     h => { lvl(h, 'first').furniture = lvl(h, 'first').furniture.filter(f => f.sym !== 'car' || f.x < 3000); }],
@@ -114,10 +135,10 @@ const CASES = [
     h => { room(h, 'first', 'Гараж').h += 250; }],
 
   ['подпись помещения наехала на вентшахту', /наезжает на мебель/,
-    h => { const l = room(h, 'second', 'Коридор').label; l.x = 7100; l.y = 6360; }],
+    h => { const l = room(h, 'second', 'Холл').label; l.x = 7100; l.y = 6400; }],
 
   ['подпись мебели наехала на шахту', /наезжает на шахту/,
-    h => { const f = furn(h, 'cokol', 'стеллаж'); f.x = 6700; f.w = 600; f.y = 5650; }],
+    h => { const f = furn(h, 'cokol', 'стеллаж'); f.x = 7000; f.w = 550; f.y = 5700; f.lup = false; }],
 
   ['мебель встала на вентшахту', /стоит на вентшахте/,
     h => { const f = lvl(h, 'cokol').furniture.find(x => x.l === 'стеллаж');
@@ -139,7 +160,7 @@ const CASES = [
     h => { lvl(h, 'second').windows[0].sill = 1600; }],
 
   ['шкаф выше потолка', /не встаёт под потолок/,
-    h => { furn(h, 'cokol', 'wardrobe').hz = 2600; }],
+    h => { furn(h, 'second', 'wardrobe').hz = 3100; }],
 
   ['размер в цепочке мимо оси стены', /не совпадает ни с одной осью стены/,
     h => { lvl(h, 'first').dims.x[1] += 300; }],
@@ -171,7 +192,8 @@ const SCASES = [
     d => { kind(d, 'eom', 'socket').along = 99000; }],
 
   ['розетка в дверном проёме', /попадает в проём/,
-    d => { const p = sys(d, 'eom').points.find(x => x.id === 'eom.p60'); p.side = 'S'; p.along = 4650; }],
+    d => { const p = sys(d, 'eom').points.find(x => x.room === 'first.r5' && x.kind === 'socket');
+           p.side = 'S'; p.along = 4650; p.z = 300; }],
 
   ['розетка под потолком', /розетка на отметке/,
     d => { kind(d, 'eom', 'socket').z = 2400; }],
@@ -190,14 +212,22 @@ const SCASES = [
     d => { const p = sys(d, 'eom').points.find(x => x.room === 'second.r4' && x.kind === 'socketIP'); p.side = 'W'; p.along = 400; }],
 
   ['радиатор не под окном', /радиатор не под окном/,
-    d => { const p = sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator');
+    d => { const p = sys(d, 'ov').points.find(x => x.room === 'second.r2' && x.kind === 'radiator');
            p.side = 'W'; p.along = 2000; }],
 
   ['радиатор шире окна', /длиннее окна/,
-    d => { sys(d, 'ov').points.find(x => x.room === 'second.r7' && x.kind === 'radiator').len = 4000; }],
+    d => { sys(d, 'ov').points.find(x => x.room === 'second.r2' && x.kind === 'radiator').len = 4000; }],
 
   ['помещение без отопления', /ничем не отапливается/,
     d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'radiator' && p.room === 'second.r1')); }],
+
+  ['радиатор под панорамным окном', /конвектор в полу, а не радиатор/,
+    d => { const p = sys(d, 'ov').points.find(x => x.kind === 'convector');
+           p.kind = 'radiator'; p.z = 150; }],
+
+  ['конвектор под обычным окном', /хватает радиатора/,
+    d => { const p = sys(d, 'ov').points.find(x => x.room === 'second.r1' && x.kind === 'radiator');
+           p.kind = 'convector'; p.z = 0; }],
 
   ['радиатор за мебелью', /радиатор перекрыт мебелью/,
     d => { const p = sys(d, 'ov').points.find(x => x.room === 'first.r5' && x.kind === 'radiator');
@@ -239,7 +269,8 @@ const SCASES = [
 
   ['на развёртке подписи некуда встать', /некуда встать|наезжают/,
     d => { const s = sys(d, 'eom'); const p = s.points.find(x => x.room === 'cokol.r7' && x.side);
-           for (let i = 1; i <= 8; i++) s.points.push({ ...p, id: `eom.x${i}` }); }]
+           for (let i = 0; i < 24; i++)
+             s.points.push({ ...p, id: `eom.x${i}`, side: 'N', along: 600 + (i % 6) * 400, z: 300 + Math.floor(i / 6) * 400 }); }]
 ];
 
 const base = check(house, brief);

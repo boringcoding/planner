@@ -208,7 +208,7 @@ export function estimate(house, systems, prices) {
     ['utp', (ss['UTP cat.6'] || 0) + (ss['UTP cat.6, магистраль'] || 0)],
     ['coax', ss['RG-6']], ['alarmWire', ss['КСПВ 2×0,5']],
     ['pointEom', q.sys.eom.points], ['pointWater', q.sys.vk.points],
-    ['radiator', dev('radiator')], ['grille', dev('supply') + dev('exhaust')],
+    ['radiator', dev('radiator')], ['convector', dev('convector')], ['grille', dev('supply') + dev('exhaust')],
     ['pointSs', q.sys.ss.points],
     ['boiler', 1], ['buffer', 1], ['tank', 1], ['ahu', 1], ['panel', 1]
   ]);

@@ -26,6 +26,7 @@ export const KIND = {
   hot: { l: 'горячая вода', mat: 'PEX 20', top: 'star' },
   drain: { l: 'канализация', mat: 'ПП 50', top: 'chain', by: 'level' },
   radiator: { l: 'радиатор', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
+  convector: { l: 'конвектор в полу', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
   supply: { l: 'приток', mat: 'воздуховод 125', top: 'chain', by: 'level' },
   exhaust: { l: 'вытяжка', mat: 'воздуховод 125', top: 'chain', by: 'level' },
   data: { l: 'RJ45', mat: 'UTP cat.6', top: 'star' },

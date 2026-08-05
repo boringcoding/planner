@@ -93,7 +93,8 @@ export function faceItems(house, L, room, side, gap = 80) {
     if (w.side !== side) continue;
     const s = spanOn(f, winRect(w, S));
     if (!s) continue;
-    const kind = w.kind === 'gate' ? 'gate' : w.kind === 'entrance' || w.kind === 'door' ? 'door' : 'window';
+    const kind = w.kind === 'gate' ? 'gate' : w.kind === 'entrance' || w.kind === 'door' ? 'door'
+      : w.kind === 'hatch' ? 'hatch' : 'window';
     out.push({ kind, id: w.id, ...s, z0: w.sill || 0, z1: (w.sill || 0) + w.hz });
   }
   for (const g of L.furniture || []) {

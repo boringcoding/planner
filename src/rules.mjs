@@ -28,6 +28,11 @@ export const LIMITS = {
   tallMin: 1200,           // с этой высоты предмет считается высоким
   doorHzMin: 1900,         // высота дверного проёма
   glazingRatio: 8,         // площадь остекления жилой комнаты — не меньше 1/8 пола
+  glazingMax: 4.5,         // и не больше 1/4,5: при −33 °C стекло — это дыра в стене
+  glazingPano: 2,          // с панорамным окном — до половины пола, но не больше
+  sillPano: 700,           // подоконник ниже — окно панорамное и помечается
+  sillWet: 1400,           // подоконник в мокром помещении: не ниже, иначе видно с улицы
+  sillHatch: 1200,         // люк в цоколь — под потолком, а не у пола
   body: 550,               // ширина тела, которым проверяется проходимость пола
   nook: 0.5e6              // клочок свободного пола мельче — щель, а не проход
 };
@@ -506,14 +511,61 @@ export function check(house, brief) {
         E(L, `${f.l || f.sym} высотой ${f.hz} не встаёт под потолок ${L.clear}`);
 
     // 27. света в жилой комнате не меньше нормы: площадь светового проёма
-    // от 1/8 площади пола
+    // от 1/8 площади пола. И не больше 1/4,5: при расчётной −33 °C лишнее
+    // стекло — это не «светло», а дыра в стене. Панорамное окно — решение,
+    // оно помечено в данных, и тогда потолок другой
     for (const r of rooms) {
       if (r.tag !== 'quiet') continue;
-      const glass = wins.filter(w => !w.kind && overlap(windowBand(w, S, 300), r) > 1000)
-        .reduce((s, w) => s + (w.b - w.a) * (w.hz || 0), 0);
+      const mine = wins.filter(w => !w.kind && overlap(windowBand(w, S, 300), r) > 1000);
+      const glass = mine.reduce((s, w) => s + (w.b - w.a) * (w.hz || 0), 0);
+      const pano = mine.some(w => w.pano);
       const need = r.w * r.h / LIMITS.glazingRatio;
+      const most = r.w * r.h / (pano ? LIMITS.glazingPano : LIMITS.glazingMax);
       if (glass < need)
         E(L, `«${r.name}»: остекление ${(glass / 1e6).toFixed(1)} м² меньше нормы ${(need / 1e6).toFixed(1)} м²`);
+      else if (glass > most)
+        E(L, `«${r.name}»: остекление ${(glass / 1e6).toFixed(1)} м² больше предела ${(most / 1e6).toFixed(1)} м² — теплопотери`);
+    }
+
+    // 27а. окна этажа стоят по одной отметке верха. Разнобой по верху видно
+    // на фасаде сразу, а в списке координат — никогда
+    const heads = [...new Set(wins.filter(w => !w.kind).map(w => (w.sill || 0) + (w.hz || 0)))];
+    if (heads.length > 1) {
+      const main = heads.map(h => [h, wins.filter(w => !w.kind && (w.sill || 0) + (w.hz || 0) === h).length])
+        .sort((a, b) => b[1] - a[1])[0][0];
+      for (const w of wins) {
+        if (w.kind) continue;
+        const head = (w.sill || 0) + (w.hz || 0);
+        if (head !== main) E(L, `окно ${w.id}: верх ${head}, у остальных окон этажа ${main}`);
+      }
+    }
+
+    // 27б. подоконник: панорамное окно помечено, мокрое помещение не
+    // просматривается с улицы, люк в цоколь — под потолком
+    for (const w of wins) {
+      const sill = w.sill || 0;
+      if (w.kind === 'hatch') {
+        if (sill < LIMITS.sillHatch) E(L, `люк ${w.id}: подоконник ${sill} ниже ${LIMITS.sillHatch}`);
+        const host = rooms.find(r => overlap(windowBand(w, S, 300), r) > 1000);
+        if (host && host.use !== 'tech') E(L, `люк ${w.id} ведёт в «${host.name}» — не техническое помещение`);
+        continue;
+      }
+      if (w.kind) continue;
+      if (sill < LIMITS.sillPano && !w.pano)
+        E(L, `окно ${w.id}: подоконник ${sill} — это панорамное окно, его помечают pano`);
+      if (w.pano && sill >= LIMITS.sillPano)
+        E(L, `окно ${w.id} помечено панорамным, а подоконник ${sill}`);
+      const host = rooms.find(r => overlap(windowBand(w, S, 300), r) > 1000);
+      if (host && host.tag === 'wet' && sill < LIMITS.sillWet)
+        E(L, `окно ${w.id} в «${host.name}»: подоконник ${sill} ниже ${LIMITS.sillWet}`);
+    }
+
+    // 27в. входная дверь ведёт в тамбур, а не сразу в дом
+    for (const w of wins) {
+      if (w.kind !== 'entrance') continue;
+      const host = rooms.find(r => overlap(windowBand(w, S, 300), r) > 1000);
+      if (!host) { E(L, `входная дверь ${w.id} никуда не ведёт`); continue; }
+      if (host.tag !== 'lock') E(L, `входная дверь ${w.id} ведёт прямо в «${host.name}» — нужен тамбур`);
     }
 
     // 28. размерная цепочка описывает то, что нарисовано. Цифра в цепочке
@@ -540,7 +592,8 @@ export function check(house, brief) {
     // нормы, а вместе они образуют два кармана без связи между собой
     for (const r of rooms) {
       if (r.tag === 'stair') continue;
-      const obst = [...furn.map(box), L.riser, ...(L.ducts || []),
+      // предмет высотой 0 — трап в полу — телу не мешает
+      const obst = [...furn.filter(f => f.hz !== 0).map(box), L.riser, ...(L.ducts || []),
       ...(L.flues || []).filter(f => !f.outside)].filter(Boolean);
       const cells = passable(r, obst);
       // зона подхода растягивается только поперёк проёма: растянутая вдоль,

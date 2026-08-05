@@ -595,6 +595,15 @@ export function renderLevel(house, L, opt = {}) {
     s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${C.paper}"/>`;
     if (!w.kind) {
       s += `<line ${off(-70)} stroke="${C.ink}" stroke-width="55"/><line ${off(70)} stroke="${C.ink}" stroke-width="55"/>`;
+    } else if (w.kind === 'hatch') {
+      // люк для дров: проём в стене штрихом, снаружи приямок с крышкой
+      s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="150 120"/>`;
+      const d = 900, pit = horiz
+        ? { x: x1, y: w.side === 'S' ? -d : S.h, w: x2 - x1, h: d }
+        : { x: w.side === 'W' ? -d : S.w, y: y1, w: d, h: y2 - y1 };
+      s += `<rect x="${pit.x}" y="${pit.y}" width="${pit.w}" height="${pit.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70" stroke-dasharray="200 150"/>`;
+      s += `<line x1="${pit.x}" y1="${pit.y}" x2="${pit.x + pit.w}" y2="${pit.y + pit.h}" stroke="${C.ink35}" stroke-width="45"/>`;
+      s += `<line x1="${pit.x}" y1="${pit.y + pit.h}" x2="${pit.x + pit.w}" y2="${pit.y}" stroke="${C.ink35}" stroke-width="45"/>`;
     } else if (w.kind === 'gate') {
       s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="420 220"/>`;
     } else {
@@ -676,7 +685,7 @@ export const SYS_C = { eom: '#A8762A', vk: '#2E6C8C', ov: '#B3402F', ss: '#41785
 
 const GLYPH = {
   socket: 'Р', socketIP: 'Р+', power: '3Ф', light: 'С', switch: 'В',
-  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', supply: 'П', exhaust: 'ВЫ',
+  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', convector: 'КВ', supply: 'П', exhaust: 'ВЫ',
   data: 'RJ', tv: 'ТВ', rack: 'Ш', leak: 'ПР', smoke: 'ДЫ'
 };
 
@@ -715,7 +724,7 @@ export function renderSystem(house, L, sys, bill) {
     if (!here(p)) continue;
     const at = sysPlace(house, p);
     if (!at) continue;
-    if (p.kind === 'radiator' && at.face) {
+    if ((p.kind === 'radiator' || p.kind === 'convector') && at.face) {
       const f = at.face, a = f.at(p.along - p.len / 2), b = f.at(p.along + p.len / 2);
       const dx = f.axis === 'x' ? 0 : 1, dy = f.axis === 'x' ? 1 : 0;
       const d = 180 * f.out * -1;

@@ -18,7 +18,7 @@ const C = {
 const SIDE_T = { S: 'ЮЗ', E: 'ЮВ', N: 'СВ', W: 'СЗ' };
 const GLYPH = {
   socket: 'Р', socketIP: 'Р+', power: '3Ф', light: 'С', switch: 'В',
-  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', supply: 'П', exhaust: 'ВЫ',
+  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', convector: 'КВ', supply: 'П', exhaust: 'ВЫ',
   data: 'RJ', tv: 'ТВ', rack: 'Ш', leak: 'ПР', smoke: 'ДЫ'
 };
 
@@ -60,6 +60,7 @@ function pill(x, y, t, color, scale = 1) {
 const ADV = 0.60;                                        // ширина знака моноширинного шрифта
 const textRect = (x, y, t, fs, left) => ({ x: left ? x : x - t.length * fs * ADV / 2, y: y - fs * 0.8, w: t.length * fs * ADV, h: fs });
 const pillRect = (x, y, t) => { const h = 300, w = Math.max(h, t.length * 130 + 150); return { x: x - w / 2, y: y - h / 2, w, h }; };
+const grow = (r, m) => ({ x: r.x - m, y: r.y - m, w: r.w + 2 * m, h: r.h + 2 * m });
 const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 // Раскладка развёртки считается один раз: по ней рисуется лист и её же
@@ -96,10 +97,16 @@ export function elevLayout(house, L, room, systems = []) {
     for (const p of sys.points) {
       if (p.room !== room.id || p.level !== L.id || !p.side) continue;
       const x = off[p.side] + p.along, y = Z(p.z);
-      if (p.kind === 'radiator') { shapes.push({ kind: 'radiator', x: x - p.len / 2, y: Z(p.z + 500), w: p.len, h: 500, color }); continue; }
-      let dy = 0;                                        // одинаковые места разводим по вертикали
-      while (pills.some(q => Math.abs(q.x - x) < 340 && Math.abs(q.y - (y + dy)) < 340)) dy -= 360;
-      pills.push({ t: GLYPH[p.kind] || '?', x, y: y + dy, color, owner: p.id, z: p.z });
+      if (p.kind === 'radiator' || p.kind === 'convector') {
+        const h = p.kind === 'convector' ? 120 : 500;
+        shapes.push({ kind: 'radiator', x: x - p.len / 2, y: Z(p.z + h), w: p.len, h, color }); continue;
+      }
+      // одинаковые места разводим по вертикали. Считается по настоящим
+      // рамкам меток: «RJ» шире «Р», и порогом на глаз они разъезжаются
+      const t = GLYPH[p.kind] || '?';
+      let dy = 0;
+      while (pills.some(q => hit(grow(pillRect(x, y + dy, t), 40), pillRect(q.x, q.y, q.t)))) dy -= 360;
+      pills.push({ t, x, y: y + dy, color, owner: p.id, z: p.z });
     }
   }
 
@@ -117,12 +124,17 @@ export function elevLayout(house, L, room, systems = []) {
   // подписи предметов уходят вверх от меток и друг от друга
   const taken = pills.map(q => pillRect(q.x, q.y, q.t))
     .concat(marks.map(m => textRect(m.x, m.y, m.t, m.fs, true)));
+  const shifts = [];
+  for (let dy = 0; dy >= -1500; dy -= 250)
+    for (const dx of [0, 300, -300, 600, -600]) shifts.push([dx, dy]);
+  shifts.sort((a, b) => (Math.abs(a[0]) - Math.abs(b[0])) || (b[1] - a[1]));
   for (const c of caps) {
-    c.y = c.top;
-    for (let step = 0; step < 6; step++) {
-      const r = textRect(c.x, c.y, c.t, c.fs);
-      if (!taken.some(q => hit(r, q))) { taken.push(r); c.fitted = true; break; }
-      c.y -= 300;
+    const x0 = c.x, y0 = c.top;
+    c.x = x0; c.y = y0;
+    for (const [dx, dy] of shifts) {
+      const r = textRect(x0 + dx, y0 + dy, c.t, c.fs);
+      if (taken.some(q => hit(r, q))) continue;
+      c.x = x0 + dx; c.y = y0 + dy; c.fitted = true; taken.push(r); break;
     }
   }
   return { per, H, off, Z, shapes, pills, caps, marks };
