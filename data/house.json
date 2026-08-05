@@ -4,7 +4,80 @@
     "plot": {
       "front": 19000,
       "depth": 35000,
-      "setback": 3000
+      "setback": 3000,
+      "red": 5000,
+      "tap": {
+        "corner": "SE",
+        "off": 700
+      },
+      "fence": {
+        "h": 1800,
+        "th": 60,
+        "gate": {
+          "id": "plot.gate",
+          "at": 1750,
+          "w": 4500
+        },
+        "wicket": {
+          "id": "plot.wicket",
+          "at": 8900,
+          "w": 1200
+        }
+      },
+      "drive": {
+        "id": "plot.drive",
+        "th": 150
+      },
+      "walk": {
+        "w": 1000,
+        "th": 100
+      },
+      "temp": {
+        "id": "plot.temp",
+        "x": 0,
+        "y": 19000,
+        "w": 8000,
+        "h": 8000,
+        "wall": 300,
+        "clear": 2700,
+        "slab": 300,
+        "roofTh": 220,
+        "mat": "block",
+        "door": {
+          "id": "plot.td1",
+          "side": "S",
+          "a": 6100,
+          "b": 7000,
+          "hz": 2100
+        },
+        "windows": [
+          {
+            "id": "plot.tg1",
+            "side": "S",
+            "a": 1500,
+            "b": 2700,
+            "sill": 800,
+            "hz": 1500
+          },
+          {
+            "id": "plot.tg2",
+            "side": "E",
+            "a": 21000,
+            "b": 22200,
+            "sill": 800,
+            "hz": 1500
+          }
+        ]
+      },
+      "septic": {
+        "id": "plot.septic",
+        "x": 13100,
+        "y": 12600,
+        "w": 1200,
+        "h": 1300,
+        "body": 2500,
+        "l": "станция биоочистки"
+      }
     }
   },
   "site": {

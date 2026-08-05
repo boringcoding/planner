@@ -1,8 +1,9 @@
 // Сборка всех листов в out/: планы уровней, планы по разделам, развёртки.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, renderRoof, explication } from '../src/render.mjs';
-import { roofGeom, verandaGeom } from '../src/roof.mjs';
+import { renderLevel, renderSystem, renderRoof, renderPlot, explication } from '../src/render.mjs';
+import { roofGeom, verandaGeom, plotMargins } from '../src/roof.mjs';
+import { plotGeom } from '../src/plot.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 
@@ -28,6 +29,19 @@ fs.writeFileSync('out/roof.svg', renderRoof(house));
   console.log(`  ${'конёк / карниз'.padEnd(30)} ${(g.ridgeZ / 1000).toFixed(3)} / ${(g.eaveZ / 1000).toFixed(3)}`);
   if (V) console.log(`  ${'веранда: настил / навес'.padEnd(30)} ${V.deckArea.toFixed(1)} / ${V.canopyArea.toFixed(1)} м²`);
   console.log('');
+}
+
+{
+  const svg = renderPlot(house, systems);
+  if (svg) {
+    fs.writeFileSync('out/plot.svg', svg);
+    const g = plotGeom(house), m = plotMargins(house);
+    console.log('Генплан:');
+    console.log(`  ${'участок'.padEnd(30)} ${(g.lot.w / 1000).toFixed(1)} × ${(g.lot.d / 1000).toFixed(1)} м`);
+    console.log(`  ${'отступы дома СЗ/улица/ЮВ/СВ'.padEnd(30)} ${m.W} / ${m.S} / ${m.E} / ${m.N}`);
+    if (g.temp) console.log(`  ${'времянка'.padEnd(30)} ${(g.temp.area).toFixed(1)} м², разрыв до дома ${(g.temp.y - house.shell.h) / 1000} м`);
+    console.log('');
+  }
 }
 
 for (const sys of systems) {

@@ -2,8 +2,10 @@
 // Как и всё остальное, выводится из data/house.json — площади не хранятся, а считаются.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, renderRoof, explication, areas } from '../src/render.mjs';
-import { roofGeom, verandaGeom, flueTop } from '../src/roof.mjs';
+import { renderLevel, renderSystem, renderRoof, renderPlot, explication, areas } from '../src/render.mjs';
+import { roofGeom, verandaGeom, flueTop, plotMargins } from '../src/roof.mjs';
+import { plotGeom } from '../src/plot.mjs';
+import { feedsGeom } from '../src/systems.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 import { ifc } from '../src/ifc.mjs';
@@ -47,7 +49,9 @@ const facts = [
   ['Трасс', `${Math.round(bills.reduce((n, { b }) => n + b.total, 0))} м`],
 ];
 
+const plotG = plotGeom(house);
 const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
+  + (plotG ? '<a href="#plot">Генплан</a>' : '')
   + (house.roof ? '<a href="#roof">Кровля</a>' : '')
   + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.title.split(' · ')[0])}</a>`).join('')
   + '<a href="#elev">Развёртки</a>' + (hasEngine ? '<a href="#ifc">Модель</a>' : '');
@@ -71,6 +75,38 @@ const sheets = levels.map(({ L, e, svg }) => `
         </tfoot>
       </table>
     </section>`).join('\n');
+
+// Генплан: единственный лист, где виден весь участок — посадка дома,
+// времянка, забор, септик и наружные сети. Конфликтуют они именно здесь
+const plotSection = (() => {
+  if (!plotG) return '';
+  const m = plotMargins(house);
+  const feeds = systems.flatMap(sys => feedsGeom(house, sys));
+  const sewerIn = feeds.find(f => f.id === 'vk.out1');
+  const rows = [
+    ['Участок', `${(plotG.lot.w / 1000).toFixed(1).replace('.', ',')} × ${(plotG.lot.d / 1000).toFixed(1).replace('.', ',')} м, въезд с юго-запада`],
+    ['Посадка дома', `${m.S / 1000} м от красной линии, ${m.W / 1000} м от северо-западной границы; до остальных ${m.E / 1000} и ${m.N / 1000} м`],
+    ...(plotG.temp ? [['Времянка', `${plotG.temp.w / 1000} × ${plotG.temp.h / 1000} м из блока в дальнем юго-восточном углу — жильё на время стройки; противопожарный разрыв до дома ${((plotG.temp.y - house.shell.h) / 1000).toFixed(1).replace('.', ',')} м (два несгораемых — норма 6)`]] : []),
+    ['Забор', `${(plotG.fence.len / 1000).toFixed(0)} м по периметру, въездные ворота ${plotG.fence.gate ? plotG.fence.gate.w / 1000 : '—'} м по оси гаражного фронта, калитка против дорожки`],
+    ...(plotG.septic ? [['Канализация', `станция биоочистки: 5 м от обоих домов, ${((plotG.lot.x1 - plotG.septic.x - plotG.septic.w) / 1000).toFixed(1).replace('.', ',')} м до границы; самотёк 2 %${sewerIn ? `, вход ${(sewerIn.pts[sewerIn.pts.length - 1].z / 1000).toFixed(2).replace('.', ',')}` : ''}; очищенная вода — напорным сбросом в кювет`]] : []),
+    ['Вода', 'одной врезкой у красной линии, к дому и времянке ниже промерзания (−2,80); футляр на пересечении со сбросом'],
+    ['Электрика', 'кабельные вводы дома и времянки от одной точки учёта, в полуметре и дальше от труб']
+  ];
+  return `
+    <section class="sheet" id="plot">
+      <div class="sheet-head">
+        <h2>Генплан</h2>
+        <p class="meta">Посадка, забор с воротами, времянка и наружные сети. Все расстояния считаются
+          из тех же данных, что и правила: сдвинулся септик — пересчитались трубы, смета и проверки.</p>
+      </div>
+      <figure class="plan">${renderPlot(house, systems)}</figure>
+      <table class="expl">
+        <caption>Решение</caption>
+        <thead><tr><th>Что</th><th>Как</th></tr></thead>
+        <tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody>
+      </table>
+    </section>`;
+})();
 
 // Кровля: на планах этажей её нет по определению, а под ней и водосток,
 // и высоты труб, и навес веранды. Отдельный лист — единственное место,
@@ -275,6 +311,7 @@ const html = `<!doctype html>
 
   <nav>${nav}<a href="#brief">Задание</a></nav>
 ${sheets}
+${plotSection}
 ${roofSection}
 ${sysSections}
 ${elevSection}
@@ -317,6 +354,7 @@ for (const { sys, b } of bills)
   for (const L of house.levels) fs.writeFileSync(`site/${sys.id}-${L.id}.svg`, renderSystem(house, L, sys, b));
 for (const { r, svg } of elevs) fs.writeFileSync(`site/elev-${r.id}.svg`, svg);
 if (house.roof) fs.writeFileSync('site/roof.svg', renderRoof(house));
+if (plotG) fs.writeFileSync('site/plot.svg', renderPlot(house, systems));
 fs.writeFileSync('site/house.ifc', ifcText);
 if (hasEngine) {
   fs.copyFileSync(new URL('../src/viewer.js', import.meta.url), 'site/viewer.js');

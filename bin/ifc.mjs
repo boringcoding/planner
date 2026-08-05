@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
 import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom, drainGeom } from '../src/roof.mjs';
 import { bill, runSegments3d, feedsGeom } from '../src/systems.mjs';
+import { plotGeom } from '../src/plot.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -45,10 +46,15 @@ const pits = pitGeom(house);
 const V = verandaGeom(house);
 const roofOn = house.roof ? 1 : 0;
 // стены: перегородки и несущие из данных, четыре наружных на уровень,
-// три стенки приямка, два фронтона и два фризовых пояса
+// три стенки приямка, два фронтона и два фризовых пояса, панели забора
+// и четыре стены времянки
+const PG = plotGeom(house);
 const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length
-  + 3 * pits.length + roofOn * 4;
-const opens = house.levels.reduce((s, L) => s + (L.openings || []).length + (L.windows || []).length, 0);
+  + 3 * pits.length + roofOn * 4
+  + (PG ? PG.fence.segs.length + (PG.temp ? PG.temp.walls.length : 0) : 0);
+const tempOpens = PG && PG.temp ? 1 + (PG.temp.windows || []).length : 0;
+const opens = house.levels.reduce((s, L) => s + (L.openings || []).length + (L.windows || []).length, 0)
+  + tempOpens;
 const furn = house.levels.reduce((s, L) => s + (L.furniture || []).filter(f => f.hz).length, 0);
 const points = systems.reduce((s, x) => s + x.points.length, 0);
 // дырки в перекрытиях: под лестницу и под каждую шахту; продух в каждом фронтоне
@@ -68,7 +74,9 @@ const ramps = rampGeom(house);
 const F = house.foundation || {};
 const slabs = house.levels.length + 1 + (F.lean ? 1 : 0) + (F.sand ? 1 : 0)
   + (V ? 2 : 0) + roofOn * 2
-  + 2 * pits.length + porches.length + apron.length + ramps.length;
+  + 2 * pits.length + porches.length + apron.length + ramps.length
+  // покрытия участка и времянка: пол, кровля, крыльцо
+  + (PG ? 1 + PG.paths.length + (PG.temp ? 3 : 0) : 0);
 const flues = house.levels[house.levels.length - 1].flues || [];
 
 // трассы: сегментный элемент на каждый прогон с геометрией и на каждую
@@ -91,9 +99,12 @@ for (const sys of systems)
   for (const f of feedsGeom(house, sys))
     nSeg[f.kind === 'power' ? 'IFCCABLECARRIERSEGMENT' : 'IFCPIPESEGMENT']++;
 
+const wells = systems.flatMap(sys => feedsGeom(house, sys)).flatMap(f => f.wells || []);
 const want = [
   ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
-  ['IFCFURNISHINGELEMENT', furn], ['IFCBUILDINGSTOREY', house.levels.length],
+  ['IFCFURNISHINGELEMENT', furn],
+  ['IFCBUILDINGSTOREY', house.levels.length + (PG && PG.temp ? 1 : 0)],
+  ['IFCBUILDING', 1 + (PG && PG.temp ? 1 : 0)],
   ['IFCSYSTEM', systems.length],
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],
@@ -102,7 +113,11 @@ const want = [
   // два снегозадержателя
   ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)
     + roofOn * (house.roof.snowGuard ? 2 : 0)],
-  ['IFCPLATE', pits.length + house.levels.filter(L => L.atticHatch).length],
+  // пластины: крышки приямков, чердачные люки, створки ворот и калитки
+  ['IFCPLATE', pits.length + house.levels.filter(L => L.atticHatch).length
+    + (PG ? [PG.fence.gate, PG.fence.wicket].filter(Boolean).length : 0)],
+  ['IFCTANK', PG && PG.septic ? 1 : 0],
+  ['IFCDISTRIBUTIONCHAMBERELEMENT', wells.length],
   ['IFCSTAIRFLIGHT', porches.length + (V && V.deckSteps.length ? 1 : 0)],
   // ограждения: марши с решением rail и настил веранды
   ['IFCRAILING', house.levels.reduce((s, L, i) => s
@@ -189,6 +204,16 @@ for (const L of house.levels) {
     const c = (w.a + w.b) / 2, t = S.wall;
     expect.set(w.id, [w.side === 'W' ? t / 2 : w.side === 'E' ? S.w - t / 2 : c,
     w.side === 'S' ? S.h - t / 2 : w.side === 'N' ? t / 2 : S.h - c]);
+  }
+}
+// проёмы времянки: та же сверка места — второе здание не прикрытие
+if (PG && PG.temp) {
+  const T = PG.temp, tw = T.t;
+  for (const w of [T.door, ...(T.windows || [])]) {
+    const c = (w.a + w.b) / 2;
+    expect.set(w.id, [
+      w.side === 'W' ? T.x + tw / 2 : w.side === 'E' ? T.x + T.w - tw / 2 : c,
+      w.side === 'S' ? S.h - (T.y + tw / 2) : w.side === 'N' ? S.h - (T.y + T.h - tw / 2) : S.h - c]);
   }
 }
 // дырки в перекрытиях ждём там же, где шахта или лестница

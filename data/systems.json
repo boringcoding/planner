@@ -1068,7 +1068,18 @@
           "id": "eom.in1",
           "kind": "power",
           "side": "S",
-          "at": 700,
+          "at": 4000,
+          "depth": 700,
+          "mat": "ВВГнг-LS 5×10, кабельный ввод"
+        },
+        {
+          "id": "eom.in2",
+          "kind": "power",
+          "target": "temp",
+          "enter": {
+            "side": "W",
+            "at": 26000
+          },
           "depth": 700,
           "mat": "ВВГнг-LS 5×10, кабельный ввод"
         }
@@ -1403,13 +1414,46 @@
           "mat": "ПНД 32, ввод воды"
         },
         {
+          "id": "vk.in2",
+          "kind": "water",
+          "target": "temp",
+          "enter": {
+            "side": "W",
+            "at": 20500
+          },
+          "depth": 2800,
+          "mat": "ПНД 32, ввод воды"
+        },
+        {
           "id": "vk.out1",
           "kind": "sewer",
-          "side": "S",
-          "at": 7450,
+          "side": "E",
+          "at": 9370,
           "depth": 1500,
           "slope": 2,
+          "to": "septic",
           "mat": "ПП 110, выпуск канализации"
+        },
+        {
+          "id": "vk.out2",
+          "kind": "sewer",
+          "target": "temp",
+          "exit": {
+            "side": "E",
+            "at": 20000
+          },
+          "depth": 1000,
+          "slope": 2,
+          "to": "septic",
+          "mat": "ПП 110, выпуск канализации"
+        },
+        {
+          "id": "vk.rel1",
+          "kind": "sewer",
+          "pressure": true,
+          "from": "septic",
+          "depth": 1200,
+          "mat": "ПНД 32, сброс очищенной воды"
         }
       ]
     },

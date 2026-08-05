@@ -3,7 +3,9 @@
 // дверном полотне и вытяжка, которой нет, — всё это на картинке незаметно.
 
 import { face, faceItems, SIDES } from './model.mjs';
-import { KIND, RESERVE, UFH_STEP, place, reach, bill, runSegments3d, trunkSegments3d, segsLen } from './systems.mjs';
+import { KIND, RESERVE, UFH_STEP, place, reach, bill, runSegments3d, trunkSegments3d, segsLen, feedsGeom } from './systems.mjs';
+import { plotGeom } from './plot.mjs';
+import { plotLabelBoxes } from './render.mjs';
 import { roomBlock } from './render.mjs';
 import { elevBoxes, elevationRooms } from './elev.mjs';
 
@@ -222,7 +224,8 @@ export function checkSystems(house, data) {
         if (f.kind === 'water' && f.depth < frost + 300)
           E(`ввод воды на ${f.depth} — выше промерзания ${frost} плюс запас 300`);
         if (f.kind === 'sewer') {
-          if ((f.slope ?? 0) < 2) E(`выпуск канализации с уклоном ${f.slope ?? 0}% — самотёку нужно 2`);
+          // напорному сбросу уклон не нужен — его гонит насос станции
+          if (!f.pressure && (f.slope ?? 0) < 2) E(`выпуск канализации с уклоном ${f.slope ?? 0}% — самотёку нужно 2`);
           if (f.depth < 1000) E(`выпуск канализации на ${f.depth} — мельче 1000 замерзает и с утеплением`);
         }
       }
@@ -266,6 +269,83 @@ export function checkSystems(house, data) {
         errs.push(`${sys.id.toUpperCase()}: ${p.id} (${p.kind}) стоит за радиатором ${r.id}`);
       }
     }
+
+  // 13. наружные сети по участку. Проверяются те же трассы, что уходят
+  // в модель и в смету: вода к канализации не ближе полутора метров,
+  // кабель к трубам — полуметра, на пересечении разводит глубина.
+  // На бумаге эти линии просто параллельны — сколько между ними, не видно
+  {
+    const PG = plotGeom(house);
+    if (PG) {
+      const S = house.shell;
+      const all = data.systems.flatMap(sys => feedsGeom(house, sys));
+      const segs = all.flatMap(f => f.pts.slice(1).map((p, i) => ({ a: f.pts[i], b: p, f })));
+      const dir = s => s.a.y === s.b.y ? 'h' : 'v';
+      const NEED = { 'sewer|water': 1500, 'power|sewer': 500, 'power|water': 500 };
+      const ov1 = (a0, a1, b0, b1) => Math.min(Math.max(a0, a1), Math.max(b0, b1))
+        - Math.max(Math.min(a0, a1), Math.min(b0, b1));
+      for (let i = 0; i < segs.length; i++)
+        for (let j = i + 1; j < segs.length; j++) {
+          const A = segs[i], B = segs[j];
+          if (A.f.kind === B.f.kind) continue;
+          const need = NEED[[A.f.kind, B.f.kind].sort().join('|')];
+          if (!need) continue;
+          if (dir(A) === dir(B)) {
+            // параллельное сближение: смотрится перекрытие проекций
+            const h = dir(A) === 'h';
+            const gap = h ? Math.abs(A.a.y - B.a.y) : Math.abs(A.a.x - B.a.x);
+            const o = h ? ov1(A.a.x, A.b.x, B.a.x, B.b.x) : ov1(A.a.y, A.b.y, B.a.y, B.b.y);
+            if (o > 500 && gap < need)
+              errs.push(`участок: ${A.f.id} и ${B.f.id} идут параллельно в ${Math.round(gap)} мм на ${Math.round(o)} мм — нужно ${need}`);
+          } else if (A.f.kind === 'power' || B.f.kind === 'power') {
+            // пересечение кабеля с трубой: разводит только глубина
+            const [H, V] = dir(A) === 'h' ? [A, B] : [B, A];
+            const x = V.a.x, y = H.a.y;
+            if (x > Math.min(H.a.x, H.b.x) && x < Math.max(H.a.x, H.b.x)
+              && y > Math.min(V.a.y, V.b.y) && y < Math.max(V.a.y, V.b.y)
+              && Math.abs(H.a.z - V.a.z) < 500)
+              errs.push(`участок: ${A.f.id} пересекает ${B.f.id} с зазором ${Math.abs(H.a.z - V.a.z)} по глубине — нужно 500`);
+          }
+        }
+      // самотёк приходит в септик не глубже, чем станция умеет принять:
+      // отодвинулся септик — выросла длина, опустился вход, и молча это
+      // не пройдёт. Уклон уже сидит в отметках самой трассы
+      for (const f of all.filter(x => x.kind === 'sewer' && !x.pressure && x.to === 'septic')) {
+        const inZ = f.pts[f.pts.length - 1].z;
+        if (inZ < -2000)
+          errs.push(`участок: ${f.id} приходит в септик на ${-inZ} — глубже 2000 стандартная станция не принимает`);
+      }
+      // трассы не выходят за границы участка и не ныряют под здания
+      const boxes = [{ name: 'домом', b: { x: 0, y: 0, w: S.w, h: S.h } }];
+      if (PG.temp) boxes.push({ name: 'времянкой', b: PG.temp.box });
+      if (PG.septic) boxes.push({ name: 'септиком', b: PG.septic.box });
+      for (const f of all)
+        for (const p of f.pts)
+          if (p.x < PG.lot.x0 || p.x > PG.lot.x1 || p.y < PG.lot.y0 || p.y > PG.lot.y1)
+            errs.push(`участок: ${f.id} выходит за границу в ${p.x},${p.y}`);
+      for (const s of segs)
+        for (const { name, b } of boxes) {
+          const h = dir(s) === 'h';
+          const inBand = h ? s.a.y > b.y && s.a.y < b.y + b.h : s.a.x > b.x && s.a.x < b.x + b.w;
+          const o = h ? ov1(s.a.x, s.b.x, b.x, b.x + b.w) : ov1(s.a.y, s.b.y, b.y, b.y + b.h);
+          if (inBand && o > 1) errs.push(`участок: ${s.f.id} проходит под ${name}`);
+        }
+    }
+  }
+
+  // 13а. подписи генплана раскладываются теми же рамками, что планы этажей,
+  // и проверяются тем же способом: примечание, съехавшее на цепочку размеров,
+  // на глаз замечают позже, чем правило
+  {
+    const bx = plotLabelBoxes(house, data.systems);
+    const shrink2 = (r, m) => ({ x: r.x + m, y: r.y + m, w: r.w - 2 * m, h: r.h - 2 * m });
+    for (let i = 0; i < bx.length; i++)
+      for (let j = i + 1; j < bx.length; j++) {
+        const a = shrink2(bx[i], 30), c = shrink2(bx[j], 30);
+        if (a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h)
+          errs.push(`генплан: подписи наезжают: ${bx[i].kind} «${bx[i].owner}» и ${bx[j].kind} «${bx[j].owner}»`);
+      }
+  }
 
   // 12. подписи развёртки не наезжают друг на друга. Метка раздела стоит
   // на своей отметке, подпись предмета от неё уходит вверх — но места

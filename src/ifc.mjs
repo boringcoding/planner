@@ -65,6 +65,7 @@ const num = v => {
 import { stairGeom } from './render.mjs';
 import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom, drainGeom } from './roof.mjs';
 import { bill, runSegments3d, trunkSegments3d, feedsGeom, KIND } from './systems.mjs';
+import { plotGeom } from './plot.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
   const S = house.shell;
@@ -132,6 +133,11 @@ export function ifc(house, systems = [], opt = {}) {
   const site = E('IFCSITE', [G('site'), owner, str('Участок'), '$', '$', sitePl, '$', '$', '.ELEMENT.', '$', '$', '$', '$', '$']);
   const bldPl = E('IFCLOCALPLACEMENT', [sitePl, AX0]);
   const building = E('IFCBUILDING', [G('building'), owner, str(house.project.title), '$', '$', bldPl, '$', '$', '.ELEMENT.', '$', '$', '$']);
+  // времянка — второе здание на том же участке, со своим этажом: смотрелка
+  // получает её отдельным уровнем, ArchiCAD — отдельным корпусом
+  const PG = plotGeom(house);
+  const bldPl2 = PG && PG.temp ? E('IFCLOCALPLACEMENT', [sitePl, AX0]) : null;
+  const building2 = bldPl2 && E('IFCBUILDING', [G('building:temp'), owner, str('Времянка'), '$', '$', bldPl2, '$', '$', '.ELEMENT.', '$', '$', '$']);
 
   // точка и оси в координатах этажа
   const pt3 = (x, y, z) => E('IFCCARTESIANPOINT', [L([num(x), num(y), num(z)])]);
@@ -249,8 +255,18 @@ export function ifc(house, systems = [], opt = {}) {
     addProps(st, `storey:${lv.id}`, [['id', lv.id], ['clear', lv.clear], ['floorToFloor', lv.floorToFloor]]);
   }
   rels.push(E('IFCRELAGGREGATES', [G('agg:project'), owner, '$', '$', project, L([site])]));
-  rels.push(E('IFCRELAGGREGATES', [G('agg:site'), owner, '$', '$', site, L([building])]));
+  rels.push(E('IFCRELAGGREGATES', [G('agg:site'), owner, '$', '$', site,
+    L(building2 ? [building, building2] : [building])]));
   rels.push(E('IFCRELAGGREGATES', [G('agg:building'), owner, '$', '$', building, L(storeys.map(s => s.st))]));
+  // этаж времянки: base 0.000, той же сеткой координат — зеркало Y общее
+  let tempStorey = null;
+  if (building2) {
+    const T = PG.temp;
+    const pl = place(bldPl2, 0, 0, 0);
+    const st = E('IFCBUILDINGSTOREY', [G('storey:temp'), owner, str('Времянка'), '$', '$', pl, '$', '$', '.ELEMENT.', '0.']);
+    tempStorey = { lv: { id: 'temp', title: 'Времянка', base: 0, clear: T.clear ?? 2700 }, st, pl };
+    rels.push(E('IFCRELAGGREGATES', [G('agg:building:temp'), owner, '$', '$', building2, L([st])]));
+  }
 
   // ---- стены -----------------------------------------------------------
   // Стена задаётся осью и толщиной: так её принимают как стену, а не как
@@ -407,32 +423,6 @@ export function ifc(house, systems = [], opt = {}) {
       ]);
       addProps(op.op, `op:${w.id}`, [['id', w.id], ['kind', w.kind || 'window'], ['sill', w.sill || 0]]);
     }
-  }
-
-  // ---- типы заполнений ---------------------------------------------------
-  // По IfcDoorType с Lining/Panel ArchiCAD пересобирает дверь в свой
-  // параметрический объект; occurrence без типа остаётся глыбой геометрии.
-  // Тип на каждую подпись «вид × габарит», а не на каждую дверь
-  for (const [sig, t] of typed) {
-    const label = `${t.name} ${Math.round(t.width)}×${Math.round(t.hz)}`;
-    let type;
-    if (t.isDoor) {
-      const lining = E('IFCDOORLININGPROPERTIES', [G(`lining:${sig}`), owner, '$', '$',
-        num(80), num(60), ...Array(11).fill('$')]);
-      const panel = E('IFCDOORPANELPROPERTIES', [G(`panel:${sig}`), owner, '$', '$',
-        num(t.kind === 'gate' ? 60 : 40), t.kind === 'gate' ? '.ROLLINGUP.' : '.SWINGING.',
-        '$', '.MIDDLE.', '$']);
-      type = E('IFCDOORTYPE', [G(`type:${sig}`), owner, str(label), '$', '$',
-        L([lining, panel]), '$', '$', '$',
-        t.kind === 'gate' ? '.GATE.' : '.DOOR.',
-        t.kind === 'gate' ? '.ROLLINGUP.' : '.SINGLE_SWING_LEFT.', '.F.', '$']);
-    } else {
-      const lining = E('IFCWINDOWLININGPROPERTIES', [G(`lining:${sig}`), owner, '$', '$',
-        num(70), num(60), ...Array(10).fill('$')]);
-      type = E('IFCWINDOWTYPE', [G(`type:${sig}`), owner, str(label), '$', '$',
-        L([lining]), '$', '$', '$', '.WINDOW.', '.SINGLE_PANEL.', '.F.', '$']);
-    }
-    rels.push(E('IFCRELDEFINESBYTYPE', [G(`typerel:${sig}`), owner, '$', '$', L(t.els), type]));
   }
 
   // ---- перекрытия --------------------------------------------------------
@@ -844,6 +834,82 @@ export function ifc(house, systems = [], opt = {}) {
     }
   }
 
+  // ---- участок: забор, ворота, покрытия, времянка -------------------------
+  // Всё, что стоит на земле, лежит на цокольном этаже — вместе с грунтом,
+  // и фильтр уровней смотрелки выключает их одним движением. Времянка —
+  // отдельное здание со своим этажом, её стены и проёмы идут обычными слоями
+  if (PG) {
+    const s0 = storeys[0];
+    const ground = PG.ground;
+    for (const f of PG.fence.segs) {
+      const el = E('IFCWALL', [G(`fence:${f.id}`), owner, str('Забор'), '$', '$',
+        place(s0.pl, f.x + f.w / 2, Y(f.y + f.h / 2), ground - s0.lv.base),
+        bodyOf([paint(boxSolid(f.w, f.h, PG.fence.h), 'metal')]), str(f.id), '.NOTDEFINED.']);
+      put(s0.st, el);
+      matOf('Профлист', el);
+    }
+    for (const [gt, name] of [[PG.fence.gate, 'Ворота въездные'], [PG.fence.wicket, 'Калитка']]) {
+      if (!gt) continue;
+      const el = E('IFCPLATE', [G(`fence:${gt.id}`), owner, str(name), '$', '$',
+        place(s0.pl, gt.x + gt.w / 2, Y(gt.y + gt.h / 2), ground + 100 - s0.lv.base),
+        bodyOf([paint(boxSolid(gt.w, gt.h, PG.fence.h - 150), 'gate')]), str(gt.id), '.NOTDEFINED.']);
+      put(s0.st, el);
+      matOf('Профлист', el);
+      addProps(el, `fence:${gt.id}`, [['id', gt.id], ['w', gt.w]]);
+    }
+    // проезд и дорожки: плиты по земле, верх вровень с планировкой
+    for (const p of [PG.drive, ...PG.paths].filter(Boolean)) {
+      const el = E('IFCSLAB', [G(`pave:${p.id}`), owner, str(p.id === 'plot.drive' ? 'Проезд' : 'Дорожка'), '$', '$',
+        place(s0.pl, p.x + p.w / 2, Y(p.y + p.h / 2), p.top - p.th - s0.lv.base),
+        bodyOf([paint(boxSolid(p.w, p.h, p.th), 'stone')]), str(p.id), '.PAVING.']);
+      put(s0.st, el);
+      matOf('Железобетон', el);
+    }
+    // времянка: плита, четыре стены с проёмами, плоская кровля и крыльцо
+    if (tempStorey) {
+      const T = PG.temp, tw = T.t;
+      const slab = E('IFCSLAB', [G('temp:slab'), owner, str('Плита времянки'), '$', '$',
+        place(tempStorey.pl, T.x + T.w / 2, Y(T.y + T.h / 2), -T.slabTh),
+        bodyOf([paint(boxSolid(T.w, T.h, T.slabTh), 'slab')]), str(`${T.id}.slab`), '.BASESLAB.']);
+      put(tempStorey.st, slab);
+      matOf('Железобетон', slab);
+      const roof = E('IFCSLAB', [G('temp:roof'), owner, str('Кровля времянки'), '$', '$',
+        place(tempStorey.pl, T.x + T.w / 2, Y(T.y + T.h / 2), T.roofZ),
+        bodyOf([paint(boxSolid(T.w, T.h, T.roofTh), 'roof')]), str(`${T.id}.roof`), '.ROOF.']);
+      put(tempStorey.st, roof);
+      matOf('Плоская кровля, мембрана', roof);
+      const porch = E('IFCSLAB', [G('temp:porch'), owner, str('Крыльцо времянки'), '$', '$',
+        place(tempStorey.pl, T.porch.x + T.porch.w / 2, Y(T.porch.y + T.porch.h / 2), T.porch.top - T.porch.th),
+        bodyOf([paint(boxSolid(T.porch.w, T.porch.h, T.porch.th), 'stone')]), str(T.porch.id), '.LANDING.']);
+      put(tempStorey.st, porch);
+      matOf('Железобетон', porch);
+      const tws = [];
+      for (const wl of T.walls) {
+        const w = wallOf(tempStorey, wl.id, 'Стена времянки', wl, T.clear ?? 2700, 'bearing');
+        w.side = wl.id.slice(-1);
+        tws.push(w);
+        addProps(w.el, `wall:${wl.id}`, [['id', wl.id], ['kind', 'shell']]);
+      }
+      const tOpen = [{ ...T.door, kind: 'door', sill: 0 }, ...(T.windows || [])];
+      for (const w of tOpen) {
+        const host = tws.find(x => x.side === w.side);
+        if (!host) continue;
+        const width = w.b - w.a, c = (w.a + w.b) / 2;
+        const wx = w.side === 'W' ? T.x + tw / 2 : w.side === 'E' ? T.x + T.w - tw / 2 : c;
+        const wy = w.side === 'S' ? Y(T.y + tw / 2) : w.side === 'N' ? Y(T.y + T.h - tw / 2) : Y(c);
+        const op = openingIn(host, w.id, wx, wy, width, w.sill || 0, w.hz);
+        const el = fill(tempStorey, op, w.id, w.kind || 'window',
+          w.kind === 'door' ? 'Наружная дверь' : 'Окно', width, w.hz, host.th - 60);
+        addStd(el, `${w.kind === 'door' ? 'door' : 'win'}:${w.id}`,
+          w.kind === 'door' ? 'Pset_DoorCommon' : 'Pset_WindowCommon', [
+            ['Reference', `IFCIDENTIFIER(${str(w.id)})`],
+            ['IsExternal', 'IFCBOOLEAN(.T.)']
+          ]);
+        addProps(op.op, `op:${w.id}`, [['id', w.id], ['kind', w.kind || 'window'], ['sill', w.sill || 0]]);
+      }
+    }
+  }
+
   // ---- приямок люка ------------------------------------------------------
   // Коробка дровяника: три бетонные стенки, дно и решётка сверху. Без неё
   // люк открывается в грунт, и «дрова падают прямо к котлу» остаётся словами
@@ -914,6 +980,34 @@ export function ifc(house, systems = [], opt = {}) {
       place(s.pl, cx, cy, 0), bodyOf(solids.map(x => paint(x, 'stone'))), str(`${q.id}.steps`),
       String(q.steps.length), String(q.steps.length), num(q.rise), num(q.tread), '.STRAIGHT.']);
     put(s.st, flight);
+  }
+
+  // ---- типы заполнений ---------------------------------------------------
+  // По IfcDoorType с Lining/Panel ArchiCAD пересобирает дверь в свой
+  // параметрический объект; occurrence без типа остаётся глыбой геометрии.
+  // Тип на каждую подпись «вид × габарит», а не на каждую дверь. Блок стоит
+  // после ВСЕХ заполнений — проёмы времянки приходят позже этажных, и типы,
+  // собранные раньше времени, оставили бы её дверь глыбой
+  for (const [sig, t] of typed) {
+    const label = `${t.name} ${Math.round(t.width)}×${Math.round(t.hz)}`;
+    let type;
+    if (t.isDoor) {
+      const lining = E('IFCDOORLININGPROPERTIES', [G(`lining:${sig}`), owner, '$', '$',
+        num(80), num(60), ...Array(11).fill('$')]);
+      const panel = E('IFCDOORPANELPROPERTIES', [G(`panel:${sig}`), owner, '$', '$',
+        num(t.kind === 'gate' ? 60 : 40), t.kind === 'gate' ? '.ROLLINGUP.' : '.SWINGING.',
+        '$', '.MIDDLE.', '$']);
+      type = E('IFCDOORTYPE', [G(`type:${sig}`), owner, str(label), '$', '$',
+        L([lining, panel]), '$', '$', '$',
+        t.kind === 'gate' ? '.GATE.' : '.DOOR.',
+        t.kind === 'gate' ? '.ROLLINGUP.' : '.SINGLE_SWING_LEFT.', '.F.', '$']);
+    } else {
+      const lining = E('IFCWINDOWLININGPROPERTIES', [G(`lining:${sig}`), owner, '$', '$',
+        num(70), num(60), ...Array(10).fill('$')]);
+      type = E('IFCWINDOWTYPE', [G(`type:${sig}`), owner, str(label), '$', '$',
+        L([lining]), '$', '$', '$', '.WINDOW.', '.SINGLE_PANEL.', '.F.', '$']);
+    }
+    rels.push(E('IFCRELDEFINESBYTYPE', [G(`typerel:${sig}`), owner, '$', '$', L(t.els), type]));
   }
 
   // ---- помещения ---------------------------------------------------------
@@ -1135,29 +1229,59 @@ export function ifc(house, systems = [], opt = {}) {
       own.push(el);
       addProps(el, `run:${sys.id}:${r.key}`, [['len', r.len], ['points', r.points.length]]);
     }
-    // наружные сети: ввод и выпуск от границы площадки до стены дома.
-    // Без них дом не подключить — а их не было ни в модели, ни в ведомости
+    // наружные сети: трассы по участку — от зданий к септику, кювету
+    // и красной линии. Тело трубы — та же полилиния, что дала метраж
+    // в ведомости и линию на генплане; колодцы стоят на её поворотах
     for (const f of feedsGeom(house, sys)) {
       const s0 = storeys[0];
       const [cls, pd, r] = f.kind === 'power'
         ? ['IFCCABLECARRIERSEGMENT', '.CONDUITSEGMENT.', 25]
-        : ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', f.kind === 'sewer' ? 55 : 16];
-      const dx = f.b.x - f.a.x, dy = f.b.y - f.a.y, dz = f.b.z - f.a.z;
-      const len = Math.hypot(dx, dy, dz);
-      const el = E(cls, [G(`feed:${f.id}`), owner,
-        str(f.kind === 'sewer' ? 'Выпуск канализации' : f.kind === 'water' ? 'Ввод воды' : 'Кабельный ввод'),
-        '$', '$', place(s0.pl, 0, 0, 0),
-        bodyOf([paint(E('IFCEXTRUDEDAREASOLID', [
+        : ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', f.kind === 'sewer' && !f.pressure ? 55 : 16];
+      const solids = [];
+      for (let i = 1; i < f.pts.length; i++) {
+        const a = f.pts[i - 1], b = f.pts[i];
+        const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        const len = Math.hypot(dx, dy, dz);
+        if (!len) continue;
+        solids.push(paint(E('IFCEXTRUDEDAREASOLID', [
           E('IFCCIRCLEPROFILEDEF', ['.AREA.', '$',
             E('IFCAXIS2PLACEMENT2D', [E('IFCCARTESIANPOINT', [L(['0.', '0.'])]), '$']), num(r)]),
-          E('IFCAXIS2PLACEMENT3D', [pt3(f.a.x, Y(f.a.y), f.a.z - s0.lv.base),
+          E('IFCAXIS2PLACEMENT3D', [pt3(a.x, Y(a.y), a.z - s0.lv.base),
             dir3(dx / len, -dy / len, dz / len), dir3(0, 0, 1)]),
-          DZ, num(Math.round(len))]), sys.id)]),
-        str(f.id), pd]);
+          DZ, num(Math.round(len))]), sys.id));
+      }
+      const el = E(cls, [G(`feed:${f.id}`), owner,
+        str(f.pressure ? 'Сброс очищенной воды' : f.kind === 'sewer' ? 'Выпуск канализации'
+          : f.kind === 'water' ? 'Ввод воды' : 'Кабельный ввод'),
+        '$', '$', place(s0.pl, 0, 0, 0), bodyOf(solids), str(f.id), pd]);
       put(s0.st, el);
       own.push(el);
       addProps(el, `feed:${f.id}`, [['id', f.id], ['kind', f.kind], ['len', f.len],
-      ['depth', f.depth], ...(f.slope ? [['slope', f.slope]] : [])]);
+      ['depth', f.depth], ...(f.slope ? [['slope', f.slope]] : []),
+      ...(f.casingLen ? [['casing', f.casingLen]] : [])]);
+      // колодцы: врезка воды и повороты самотёчной канализации
+      for (const wl of f.wells || []) {
+        const bottom = Math.min(...f.pts.map(p => p.z)) - 300;
+        const top = (house.site.ground ?? -300) + 100;
+        const well = E('IFCDISTRIBUTIONCHAMBERELEMENT', [G(`well:${wl.id}`), owner,
+          str('Колодец'), '$', '$', place(s0.pl, wl.x, Y(wl.y), bottom - s0.lv.base),
+          bodyOf([paint(cylSolid(wl.d / 2, top - bottom), sys.id)]),
+          str(wl.id), '.INSPECTIONCHAMBER.']);
+        put(s0.st, well);
+        own.push(well);
+        addProps(well, `well:${wl.id}`, [['id', wl.id], ['d', wl.d]]);
+      }
+    }
+    // септик: станция биоочистки — герметичный корпус с горловиной над землёй
+    if (sys.id === 'vk' && PG && PG.septic) {
+      const s0 = storeys[0], q = PG.septic;
+      const el = E('IFCTANK', [G('septic'), owner, str('Септик · станция биоочистки'), '$', '$',
+        place(s0.pl, q.x + q.w / 2, Y(q.y + q.h / 2), q.bottom - s0.lv.base),
+        bodyOf([paint(boxSolid(q.w, q.h, q.top - q.bottom), sys.id)]), str(q.id), '.STORAGE.']);
+      put(s0.st, el);
+      own.push(el);
+      addProps(el, 'septic', [['id', q.id], ['l', q.l || 'септик'],
+      ['top', q.top], ['bottom', q.bottom]]);
     }
     for (const t of b.trunks) {
       const segs = trunkSegments3d(house, sys, t);

@@ -5,8 +5,9 @@
 // Что здесь считается и чего не считается, сказано в разделах: смета, в которой
 // не видно границы, всегда «дешевле» настоящей.
 
-import { bill } from './systems.mjs';
+import { bill, feedsGeom } from './systems.mjs';
 import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom, drainGeom } from './roof.mjs';
+import { plotGeom } from './plot.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
 const mm = v => v / 1000;                      // мм -> м
@@ -163,6 +164,31 @@ export function quantities(house, systems) {
   q.porches = porches.length;
   q.porchSteps = porches.reduce((s, q0) => s + q0.steps.length, 0);
 
+  // ---- участок и времянка --------------------------------------------------
+  // те же геометрии, что дали генплан и тела в выгрузке: забор — панели
+  // минус ворота, покрытия — площади плит, времянка — свои объёмы
+  const PG = plotGeom(house);
+  if (PG) {
+    q.fence = mm(PG.fence.len);
+    q.gateDrive = PG.fence.gate ? 1 : 0;
+    q.wicket = PG.fence.wicket ? 1 : 0;
+    q.paveDrive = m2(PG.drive.w * PG.drive.h);
+    q.paveWalk = PG.paths.reduce((s, p) => s + m2(p.w * p.h), 0);
+    q.septicAU = PG.septic ? 1 : 0;
+    q.wells = systems.flatMap(sys => feedsGeom(house, sys)).reduce((s, f) => s + (f.wells || []).length, 0);
+    if (PG.temp) {
+      const T = PG.temp;
+      q.tempFoot = m2(T.w * T.h);
+      q.tempSand = q.tempFoot * 0.3;
+      q.tempSlab = q.tempFoot * mm(T.slabTh);
+      q.tempBlock = 2 * (mm(T.w) + mm(T.h)) * mm(T.clear ?? 2700) * mm(T.t)
+        - [T.door, ...(T.windows || [])].reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0) * mm(T.t);
+      q.tempRoof = q.tempFoot;
+      q.tempWin = (T.windows || []).reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
+      q.tempPorch = m2(T.porch.w * T.porch.h);
+    }
+  }
+
   // ---- инженерия из собственных ведомостей --------------------------------
   q.sys = {};
   for (const sys of systems) {
@@ -242,6 +268,8 @@ export function estimate(house, systems, prices) {
     ['pex16', (ov['PEX 16, подача и обратка'] || 0) + (ov['PEX 16, контур тёплого пола'] || 0)],
     ['duct125', ov['воздуховод 125']],
     ['feedWater', vk['ПНД 32, ввод воды']], ['feedSewer', vk['ПП 110, выпуск канализации']],
+    ['feedRelief', vk['ПНД 32, сброс очищенной воды']],
+    ['casing', vk['футляр ПНД 110 на пересечениях']],
     ['feedPower', eom['ВВГнг-LS 5×10, кабельный ввод']],
     ['utp', (ss['UTP cat.6'] || 0) + (ss['UTP cat.6, магистраль'] || 0)],
     ['coax', ss['RG-6']], ['alarmWire', ss['КСПВ 2×0,5']],
@@ -257,6 +285,17 @@ export function estimate(house, systems, prices) {
     ['blind', q.blind], ['porch', q.porches],
     ['verandaDeck', q.veranda], ['verandaRoof', q.verandaRoof], ['verandaRail', q.verandaRail],
     ['pit', q.pits]
+  ]);
+
+  add('Участок и времянка', [
+    ['fence', q.fence], ['gateDrive', q.gateDrive], ['wicket', q.wicket],
+    ['paveDrive', q.paveDrive], ['paveWalk', q.paveWalk + (q.tempPorch || 0)],
+    ['septicAU', q.septicAU], ['well', q.wells],
+    ['sandbed', q.tempSand], ['concrete', q.tempSlab], ['workSlab', q.tempSlab],
+    ['rebar', (q.tempSlab || 0) * 0.1],
+    ['block', q.tempBlock], ['workBlock', q.tempBlock],
+    ['tempRoof', q.tempRoof],
+    ['window', q.tempWin], ['workWindow', q.tempWin], ['doorEntry', q.tempFoot ? 1 : 0]
   ]);
 
   add('Отделка', [

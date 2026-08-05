@@ -182,6 +182,13 @@
         const t = api.GetLine(model, e).Tag;
         if (t && String(t.value).endsWith('.srail')) typeKey.set(e, 'stairs');
       }
+      // забор, ворота и покрытия — в слой участка, к грунту: выключается
+      // одной фишкой. Времянка (plot.temp*) остаётся обычными слоями
+      for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE'])
+        for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
+          const t = api.GetLine(model, e).Tag;
+          if (t && /^plot\.(fence|gate|wicket|drive|walk)/.test(String(t.value))) typeKey.set(e, 'site');
+        }
 
       say('собираю геометрию…');
       const buckets = new Map();          // "группа|этаж" -> {pos,nrm,eid,idx}

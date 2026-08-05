@@ -16,6 +16,7 @@
 
 import { point, pathOnLevel } from './model.mjs';
 import { siteMargin } from './roof.mjs';
+import { plotGeom, plotLanes } from './plot.mjs';
 
 export const KIND = {
   socket: { l: 'розетка', mat: 'ВВГнг-LS 3×2,5', top: 'chain', by: 'room' },
@@ -186,20 +187,136 @@ export function trunkSegments3d(house, sys, t) {
 export const segsLen = segs => segs.reduce((s, x) =>
   s + (x.v ? x.z1 - x.z0 : Math.abs(x.b.x - x.a.x) + Math.abs(x.b.y - x.a.y)), 0);
 
-// Наружные сети: ввод и выпуск — от границы площадки до стены дома.
-// Решение (сторона, место, глубина, уклон) лежит в данных системы,
-// длина считается от того же отступа, что и грунт площадки
+// Наружные сети: вводы, выпуски и сброс — трассы по участку. Решение
+// (точка входа в здание, глубина, уклон, назначение) лежит в данных
+// системы, маршрут считается по коридорам участка: самотёк — к септику,
+// напор — в кювет, вода и кабель времянки — вдоль юго-восточной границы.
+// Каждая трасса — полилиния точек с отметками; самотёчная набирает
+// глубину по накопленной длине, и вход в септик получается сам
 export function feedsGeom(house, sys) {
-  const S = house.shell, m = siteMargin(house);
-  return (sys.feeds || []).map(f => {
-    const z0 = -f.depth;                                    // у стены дома
-    const z1 = -f.depth - (f.slope ? Math.round(m * f.slope / 100) : 0);   // у границы
-    const [a, b] = f.side === 'S' ? [{ x: f.at, y: 0, z: z0 }, { x: f.at, y: -m, z: z1 }]
-      : f.side === 'N' ? [{ x: f.at, y: S.h, z: z0 }, { x: f.at, y: S.h + m, z: z1 }]
-        : f.side === 'W' ? [{ x: 0, y: f.at, z: z0 }, { x: -m, y: f.at, z: z1 }]
-          : [{ x: S.w, y: f.at, z: z0 }, { x: S.w + m, y: f.at, z: z1 }];
-    return { ...f, a, b, len: Math.round(Math.hypot(m, z0 - z1)) };
-  });
+  const S = house.shell;
+  const g = plotGeom(house), lanes = plotLanes(house);
+  const wallPt = (side, at) => side === 'S' ? { x: at, y: 0 } : side === 'N' ? { x: at, y: S.h }
+    : side === 'W' ? { x: 0, y: at } : { x: S.w, y: at };
+  const out = [];
+  for (const f of sys.feeds || []) {
+    // без участка — прямой отрезок до отступа, как жил дом до генплана
+    if (!g) {
+      const m = siteMargin(house);
+      const z0 = -f.depth, z1 = z0 - (f.slope ? Math.round(m * f.slope / 100) : 0);
+      const p0 = wallPt(f.side, f.at);
+      const p1 = f.side === 'S' ? { x: f.at, y: -m } : f.side === 'N' ? { x: f.at, y: S.h + m }
+        : f.side === 'W' ? { x: -m, y: f.at } : { x: S.w + m, y: f.at };
+      out.push({ ...f, pts: [{ ...p0, z: z0 }, { ...p1, z: z1 }], wells: [], len: Math.round(Math.hypot(m, z0 - z1)) });
+      continue;
+    }
+    const T = g.temp, Q = g.septic, lot = g.lot;
+    // точка на стене времянки
+    const tempPt = (side, at) => side === 'S' ? { x: at, y: T.y } : side === 'N' ? { x: at, y: T.y + T.h }
+      : side === 'W' ? { x: T.x, y: at } : { x: T.x + T.w, y: at };
+    let xy = [], wells = [];
+    if (f.target === 'temp' && f.enter && T) {
+      // от узла у красной линии — фронтальной горизонталью, потом боковой
+      // полосой (с той стороны, где стоит времянка) и в её стену. Вода
+      // ответвляется тройником от магистрали в точке ввода дома
+      const main = (sys.feeds || []).find(q => q.kind === f.kind && !q.target && !q.from);
+      const x0 = main ? main.at : f.enter.at;
+      const [laneX, laneY] = f.kind === 'water' ? [lanes.waterX, lanes.waterY] : [lanes.powerX, lanes.powerY];
+      const end = tempPt(f.enter.side, f.enter.at);
+      const start = f.kind === 'water' && lanes.tapX != null
+        ? { x: x0, y: laneY }                         // тройник на магистрали от угла
+        : { x: x0, y: lot.y0 };
+      xy = [start, { x: x0, y: laneY }, { x: laneX, y: laneY }, { x: laneX, y: end.y }, end];
+      if (f.kind === 'water' && lanes.tapX != null)
+        wells = [{ id: `${f.id}.w1`, x: x0, y: laneY, d: 700 }];
+    } else if (f.from === 'septic' && Q) {
+      // напорный сброс очищенной воды: от станции к кювету улицы
+      xy = [{ x: lanes.relX, y: Q.y }, { x: lanes.relX, y: lot.y0 }];
+    } else if (f.to === 'septic' && Q) {
+      const inY = Q.y + Q.h / 2;
+      if (f.exit && T) {
+        // выпуск времянки: к коридору самотёка и на юг, в общий колодец
+        const p0 = tempPt(f.exit.side, f.exit.at);
+        xy = f.exit.side === 'E' || f.exit.side === 'W'
+          ? [p0, { x: lanes.sewerX, y: p0.y }, { x: lanes.sewerX, y: inY }]
+          : [p0, { x: p0.x, y: inY }, { x: lanes.sewerX, y: inY }];
+        wells = [f.exit.side === 'E' || f.exit.side === 'W'
+          ? { id: `${f.id}.w1`, x: lanes.sewerX, y: p0.y, d: 425 }
+          : { id: `${f.id}.w1`, x: p0.x, y: inY, d: 425 }];
+      } else {
+        const p0 = wallPt(f.side, f.at);
+        xy = [p0, { x: lanes.sewerX, y: p0.y }, { x: lanes.sewerX, y: inY }, { x: Q.x, y: inY }];
+        // колодцы на поворотах самотёка; второй — общий с веткой времянки
+        wells = [{ id: `${f.id}.w1`, x: lanes.sewerX, y: p0.y, d: 425 },
+        { id: `${f.id}.w2`, x: lanes.sewerX, y: inY, d: 425 }];
+      }
+    } else {
+      const p0 = wallPt(f.side, f.at);
+      if (f.kind === 'water' && lanes.tapX != null && f.side === 'S') {
+        // уличная магистраль подходит к углу ЮЗ-ЮВ: от колодца врезки
+        // фронтальной полосой до точки ввода и перпендикулярно в дом
+        xy = [p0, { x: f.at, y: lanes.waterY }, { x: lanes.tapX, y: lanes.waterY }, { x: lanes.tapX, y: lot.y0 }];
+        wells = [{ id: `${f.id}.w1`, x: lanes.tapX, y: lot.y0 + 700, d: 1000 }];
+      } else {
+        // прямой ввод от красной линии
+        const p1 = f.side === 'S' ? { x: f.at, y: lot.y0 } : f.side === 'N' ? { x: f.at, y: lot.y1 }
+          : f.side === 'W' ? { x: lot.x0, y: f.at } : { x: lot.x1, y: f.at };
+        xy = [p0, p1];
+        if (f.kind === 'water') wells = [{ id: `${f.id}.w1`, x: p1.x, y: lot.y0 + 700, d: 1000 }];
+      }
+    }
+    xy = xy.filter((p, i) => !i || p.x !== xy[i - 1].x || p.y !== xy[i - 1].y);
+    // отметки: напор и вода идут на одной глубине, самотёк набирает уклон
+    let run = 0;
+    const pts = xy.map((p, i) => {
+      if (i) run += Math.hypot(p.x - xy[i - 1].x, p.y - xy[i - 1].y);
+      const z = -f.depth - (f.slope && !f.pressure ? Math.round(run * f.slope / 100) : 0);
+      return { ...p, z };
+    });
+    const len = pts.reduce((s, p, i) => i ? s + Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y, p.z - pts[i - 1].z) : 0, 0);
+    out.push({ ...f, pts, wells, len: Math.round(len) });
+  }
+  // Футляр на водопроводе там, где он проходит под канализацией: вода ниже
+  // промерзания, самотёк мельче, и в каждом пересечении вода оказывается
+  // под трубой стоков — норма в таком узле требует защитной трубы 5 + 5 м
+  const sewers = out.filter(f => f.kind === 'sewer');
+  for (const f of out.filter(x => x.kind === 'water')) {
+    f.casings = [];
+    for (let i = 1; i < f.pts.length; i++) {
+      const a = f.pts[i - 1], b = f.pts[i];
+      for (const s of sewers)
+        for (let j = 1; j < s.pts.length; j++) {
+          const c = s.pts[j - 1], d = s.pts[j];
+          const cross = crossAt(a, b, c, d);
+          if (cross && cross.z1 < cross.z2)
+            f.casings.push({ x: cross.x, y: cross.y, len: 10000, dir: a.y === b.y ? 'h' : 'v' });
+        }
+      // боковые полосы уже пяти метров, и вода вдоль дома идёт ближе трёх
+      // к фундаменту — стеснённые условия: весь участок сближения в футляре
+      if (a.x === b.x) {
+        const gap = a.x < 0 ? -a.x : a.x > S.w ? a.x - S.w : 0;
+        const y0 = Math.max(Math.min(a.y, b.y), 0), y1 = Math.min(Math.max(a.y, b.y), S.h);
+        if (gap && gap < 3000 && y1 - y0 > 500)
+          f.casings.push({ x: a.x, y: (y0 + y1) / 2, len: y1 - y0 + 2000, dir: 'v' });
+      }
+    }
+    f.casingLen = f.casings.reduce((s, c) => s + c.len, 0);
+  }
+  return out;
+}
+
+// пересечение двух осевых отрезков в плане: один горизонтален, другой
+// вертикален; z обеих труб в точке пересечения — по линейной интерполяции
+function crossAt(a, b, c, d) {
+  const h1 = a.y === b.y, h2 = c.y === d.y;
+  if (h1 === h2) return null;
+  const [ha, hb, va, vb] = h1 ? [a, b, c, d] : [c, d, a, b];
+  const x = va.x, y = ha.y;
+  if (x <= Math.min(ha.x, hb.x) || x >= Math.max(ha.x, hb.x)) return null;
+  if (y <= Math.min(va.y, vb.y) || y >= Math.max(va.y, vb.y)) return null;
+  const zh = ha.z + (hb.z - ha.z) * Math.abs(x - ha.x) / Math.abs(hb.x - ha.x);
+  const zv = va.z + (vb.z - va.z) * Math.abs(y - va.y) / Math.abs(vb.y - va.y);
+  return { x, y, z1: h1 ? zh : zv, z2: h1 ? zv : zh };
 }
 
 // ведомость: сколько чего и сколько метров какого материала
@@ -221,8 +338,12 @@ export function bill(house, sys) {
   // запас уже сидит в шаге; подводка посчитана прогоном выше
   for (const p of sys.points)
     if (p.kind === 'ufh') addM('PEX 16, контур тёплого пола', Math.round(p.w * p.h / UFH_STEP));
-  // наружные вводы и выпуски — прямые участки, без запаса на изгибы
-  for (const f of feedsGeom(house, sys)) addM(f.mat, f.len);
+  // наружные вводы и выпуски — прямые участки, без запаса на изгибы;
+  // футляры на пересечениях с канализацией — отдельной строкой
+  for (const f of feedsGeom(house, sys)) {
+    addM(f.mat, f.len);
+    if (f.casingLen) addM('футляр ПНД 110 на пересечениях', f.casingLen);
+  }
   for (const p of sys.points) dev.set(p.kind, (dev.get(p.kind) || 0) + 1);
 
   return {

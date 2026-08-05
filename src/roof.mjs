@@ -186,6 +186,18 @@ export function blindGeom(house) {
 export const siteMargin = house =>
   (house.project && house.project.plot && house.project.plot.setback) || 3000;
 
+// Отступы дома от границ по сторонам. Они разные: северо-западная граница
+// в setback, красная линия в red, а юго-восток и северо-восток — то, что
+// осталось от участка. Правила, грунт и сети берут их отсюда, а не из
+// одного числа на все стороны
+export function plotMargins(house) {
+  const P = (house.project && house.project.plot) || {};
+  const setback = P.setback ?? 3000;
+  if (!P.front) return { W: setback, S: setback, E: setback, N: setback };
+  const red = P.red ?? setback, S = house.shell;
+  return { W: setback, S: red, E: P.front - setback - S.w, N: P.depth - red - S.h };
+}
+
 // подошва фундаментного пирога: плита, подбетонка, подушка — решение в данных
 export function foundationBottom(house) {
   const F = house.foundation || {};
@@ -212,20 +224,20 @@ export function drainGeom(house) {
 // Дом стоит в земле, а не в пустоте: цоколь заглублён, наружу торчат
 // 300 мм, сваи веранды и фундаменты труб уходят в грунт. Без тела земли
 // модель читается трёхэтажной коробкой на ходулях — и так она и уехала
-// на страницу. Площадка — полосы вокруг пятна дома с ямой приямка,
-// отступ по западу — до границы участка, по остальным сторонам столько же.
+// на страницу. Площадка — весь участок до границ, полосами вокруг пятна
+// дома с ямой приямка: отступы по сторонам разные, и грунт это знает.
 export function groundGeom(house) {
   const S = house.shell;
   const ground = house.site.ground ?? -300;
-  const m = siteMargin(house);
+  const m = plotMargins(house);
   const V = verandaGeom(house);
   // низ грунта — ниже всего, что в него закопано: подошвы пирога и свай
   const bottom = Math.min(foundationBottom(house), V ? V.pileBottom : 0) - 300;
   const strips = [
-    { x: -m, y: -m, w: S.w + 2 * m, h: m },                 // юг
-    { x: -m, y: S.h, w: S.w + 2 * m, h: m },                // север
-    { x: -m, y: 0, w: m, h: S.h },                          // запад
-    { x: S.w, y: 0, w: m, h: S.h }                          // восток
+    { x: -m.W, y: -m.S, w: S.w + m.W + m.E, h: m.S },       // юг, до красной линии
+    { x: -m.W, y: S.h, w: S.w + m.W + m.E, h: m.N },        // север, в глубину участка
+    { x: -m.W, y: 0, w: m.W, h: S.h },                      // запад
+    { x: S.w, y: 0, w: m.E, h: S.h }                        // восток
   ];
   // яма приямка: свет короба открыт до дна, грунт подходит к стенкам снаружи
   const out = [];

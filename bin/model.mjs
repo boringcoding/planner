@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import { roofGeom, verandaGeom, pitGeom, groundGeom } from '../src/roof.mjs';
+import { plotGeom } from '../src/plot.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -96,6 +97,13 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCRAILING))) {
   const t = api.GetLine(model, e).Tag;
   if (t && String(t.value).endsWith('.srail')) groupOf.set(e, 'stairs');
 }
+// забор, ворота и покрытия — слой участка, как грунт: различает метка.
+// Времянка (plot.temp*) остаётся в обычных слоях — это здание
+for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE'])
+  for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
+    const t = api.GetLine(model, e).Tag;
+    if (t && /^plot\.(fence|gate|wicket|drive|walk)/.test(String(t.value))) groupOf.set(e, 'site');
+  }
 const sysOf = new Map();
 for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELASSIGNSTOGROUP))) {
   const r = api.GetLine(model, rid);
@@ -131,6 +139,8 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCWALL))) {
   if (t && /^roof\.gable/.test(String(t.value))) gables.add(e);
 }
 const gbox = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] };
+// габарит каждого элемента: по нему меряются времянка и прочее адресное
+const elBox = new Map();
 
 api.StreamAllMeshes(model, mesh => {
   meshes++;
@@ -156,7 +166,11 @@ api.StreamAllMeshes(model, mesh => {
         -(m[2] * v[k] + m[6] * v[k + 1] + m[10] * v[k + 2] + m[14]) * MM,
         (m[1] * v[k] + m[5] * v[k + 1] + m[9] * v[k + 2] + m[13]) * MM
       ];
+      let eb = elBox.get(e);
+      if (!eb) { eb = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] }; elBox.set(e, eb); }
       for (let a = 0; a < 3; a++) {
+        if (p[a] < eb.mn[a]) eb.mn[a] = p[a];
+        if (p[a] > eb.mx[a]) eb.mx[a] = p[a];
         if (p[a] < s.mn[a]) s.mn[a] = p[a];
         if (p[a] > s.mx[a]) s.mx[a] = p[a];
         if (slopes.has(e)) {
@@ -237,6 +251,46 @@ if (house.roof) {
   }
 }
 
+// Участок: грунт обязан дотянуться до границ, забор — обойти их, времянка —
+// стоять коробкой в дальнем углу. Список сущностей всё это подтверждает
+// и с пустой геометрией; здесь меряются треугольники
+{
+  const PG = plotGeom(house);
+  if (PG) {
+    const st = stat.get('site');
+    if (!st) errs.push('слой «Участок» пуст — ни грунта, ни забора');
+    else {
+      if (st.mn[0] > PG.lot.x0 - 100 + 200 || st.mx[0] < PG.lot.x1 - 200)
+        errs.push(`участок в модели ${Math.round(st.mn[0])}…${Math.round(st.mx[0])} по x, границы ${PG.lot.x0}…${PG.lot.x1}`);
+      const fenceTop = (PG.ground ?? -300) + PG.fence.h;
+      if (Math.abs(st.mx[2] - fenceTop) > 50)
+        errs.push(`верх слоя «Участок» ${Math.round(st.mx[2])}, верх забора ${fenceTop}`);
+    }
+    if (PG.temp) {
+      const tempEls = new Set();
+      for (const cls of ['IFCWALL', 'IFCSLAB'])
+        for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
+          const t = api.GetLine(model, e).Tag;
+          if (t && /^plot\.temp/.test(String(t.value))) tempEls.add(e);
+        }
+      if (!tempEls.size) errs.push('времянки в модели нет вовсе');
+      else {
+        const tb = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] };
+        for (const [e, b] of elBox) if (tempEls.has(e))
+          for (let a = 0; a < 3; a++) {
+            if (b.mn[a] < tb.mn[a]) tb.mn[a] = b.mn[a];
+            if (b.mx[a] > tb.mx[a]) tb.mx[a] = b.mx[a];
+          }
+        const T = PG.temp;
+        if (Math.abs(tb.mn[0] - T.x) > 5 || Math.abs(tb.mx[0] - (T.x + T.w)) > 5)
+          errs.push(`времянка стоит в ${Math.round(tb.mn[0])}…${Math.round(tb.mx[0])} по x, по генплану ${T.x}…${T.x + T.w}`);
+        if (Math.abs(tb.mx[2] - T.top) > 5)
+          errs.push(`верх времянки ${Math.round(tb.mx[2])}, по генплану ${T.top}`);
+      }
+    }
+  }
+}
+
 // Низ — грунт площадки, а под ним ничего: сваи и плита в земле
 const grounds = groundGeom(house);
 const bottom = Math.min(V ? V.pileBottom : 0, house.levels[0].base - 400,
@@ -258,7 +312,7 @@ if (box.mx[0] < planX[1] - 5) errs.push(`модель кончается на x 
 const SOLID = ['IFCWALL', 'IFCSLAB', 'IFCDOOR', 'IFCWINDOW', 'IFCSTAIR', 'IFCSTAIRFLIGHT',
   'IFCFURNISHINGELEMENT', 'IFCBUILDINGELEMENTPROXY', 'IFCBEAM', 'IFCPILE', 'IFCCOLUMN',
   'IFCPLATE', 'IFCCHIMNEY', 'IFCRAILING', 'IFCPIPESEGMENT', 'IFCDUCTSEGMENT',
-  'IFCCABLECARRIERSEGMENT', 'IFCGEOGRAPHICELEMENT'];
+  'IFCCABLECARRIERSEGMENT', 'IFCGEOGRAPHICELEMENT', 'IFCTANK', 'IFCDISTRIBUTIONCHAMBERELEMENT'];
 for (const t of SOLID) {
   const code = WebIFC[t];
   if (typeof code !== 'number') { errs.push(`движок не знает типа ${t}`); continue; }

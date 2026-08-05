@@ -2,7 +2,8 @@
 // а не чинится единичной правкой координаты.
 
 import { labelBoxes, roofLabelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
-import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits } from './roof.mjs';
+import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits, plotMargins } from './roof.mjs';
+import { plotGeom } from './plot.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -68,7 +69,17 @@ export const LIMITS = {
   stairStep: [600, 650],   // формула удобства 2r + t
   carBay: [2500, 5300],    // машиноместо на створку ворот: ширина и глубина
   apronMin: 800,           // ширина отмостки
-  jambMin: 100             // простенок от наружного проёма до примыкающей стены
+  jambMin: 100,            // простенок от наружного проёма до примыкающей стены
+  redLine: 5000,           // от красной линии до жилого дома
+  sideSetback: 3000,       // от прочих границ до жилого строения
+  fireGapStone: 6000,      // разрыв между двумя несгораемыми домами (СП 4.13130)
+  fireGapWood: 10000,      // камень — дерево: деревянной времянке тут не встать
+  septicToHouse: 5000,     // от станции очистки до жилого дома
+  septicToBorder: 1000,    // до границы соседнего участка
+  septicToRed: 5000,       // до красной линии
+  gateW: 3500,             // въездные ворота: проезд пожарной машины
+  wicketW: 1000,           // калитка
+  gateAxisSnap: 150        // ось въезда против оси гаражного фронта
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -959,10 +970,11 @@ export function check(house, brief) {
   // друг с другом и упираются в отступ до границы участка. По отдельности
   // каждый помещается; вместе они и составляют фасад, которого нет на плане
   const bits = outsideBits(house);
-  const setback = (house.project && house.project.plot && house.project.plot.setback) || 0;
+  const margins = plotMargins(house);
   for (const b of bits) {
-    if (setback && setback - b.reach < LIMITS.yardPass)
-      errs.push(`${b.kind} ${b.id} вынесен на ${b.reach} — до границы остаётся ${setback - b.reach}, нужно ${LIMITS.yardPass} на проход`);
+    const margin = margins[b.side] || 0;
+    if (margin && margin - b.reach < LIMITS.yardPass)
+      errs.push(`${b.kind} ${b.id} вынесен на ${b.reach} — до границы остаётся ${margin - b.reach}, нужно ${LIMITS.yardPass} на проход`);
     // наружный дымоход стоит перед стеной, и окно за ним смотрит в трубу
     if (b.kind !== 'дымоход') continue;
     for (const L of house.levels)
@@ -1172,6 +1184,116 @@ export function check(house, brief) {
       if (!master) errs.push('спальня хозяев не отмечена ролью master');
       else if (master.y + master.h / 2 < S.h / 2)
         errs.push(`спальня хозяев «${master.name}» стоит в уличной половине дома`);
+    }
+  }
+
+  // 38. участок. Дом, времянка и септик разводятся не друг с другом,
+  // а с границами: каждый по отдельности стоит нормально, а вместе они
+  // делят 19 метров фронта, и лишний метр в одном месте вылезает нехваткой
+  // в другом. Расстояния меряются между прямоугольниками, а не «на глаз»
+  {
+    const PG = plotGeom(house);
+    const dist = (a, b) => {
+      const dx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0);
+      const dy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0);
+      return Math.hypot(dx, dy);
+    };
+    if (!PG) errs.push('участок не задан: без границ не проверить ни отступы, ни разрывы, ни септик');
+    else {
+      const { lot, m, temp, septic, fence, drive, paths } = PG;
+      const houseBox = rect(0, 0, S.w, S.h);
+      // 38а. посадка: красная линия и боковые отступы — у обоих домов
+      if (m.S < LIMITS.redLine)
+        errs.push(`дом в ${m.S} от красной линии, норма ${LIMITS.redLine}`);
+      for (const [side, v] of [['СЗ', m.W], ['ЮВ', m.E], ['СВ', m.N]])
+        if (v < LIMITS.sideSetback)
+          errs.push(`дом в ${v} от границы ${side}, норма ${LIMITS.sideSetback}`);
+      if (temp) {
+        const t = temp.box;
+        for (const [side, v] of [['СЗ', t.x - lot.x0], ['ЮВ', lot.x1 - t.x - t.w],
+        ['улица', t.y - lot.y0], ['СВ', lot.y1 - t.y - t.h]]) {
+          const lim = side === 'улица' ? LIMITS.redLine : LIMITS.sideSetback;
+          if (v < lim) errs.push(`времянка в ${Math.round(v)} от границы ${side}, норма ${lim}`);
+        }
+        // 38б. противопожарный разрыв: оба дома несгораемые — 6 м, деревянная
+        // времянка потребовала бы 10, и на этом участке ей физически не встать
+        const need = temp.mat === 'wood' ? LIMITS.fireGapWood : LIMITS.fireGapStone;
+        const gap = dist(houseBox, t);
+        if (gap < need)
+          errs.push(`противопожарный разрыв дом — времянка ${Math.round(gap)}, материалам (${temp.mat === 'wood' ? 'камень — дерево' : 'камень — камень'}) нужно ${need}`);
+        // дверь времянки обращена к дому и дорожке, а не в забор
+        if (!['S', 'W'].includes(temp.door.side))
+          errs.push(`дверь времянки выходит на сторону ${temp.door.side} — к забору, а не к дому`);
+      }
+      // 38в. септик: пять метров до каждого жилого дома, отступ от границ,
+      // от красной линии — и не под проездом или дорожкой: его обслуживают
+      if (septic) {
+        const q = septic.box;
+        if (dist(houseBox, q) < LIMITS.septicToHouse)
+          errs.push(`септик в ${Math.round(dist(houseBox, q))} от дома, норма ${LIMITS.septicToHouse}`);
+        if (temp && dist(temp.box, q) < LIMITS.septicToHouse)
+          errs.push(`септик в ${Math.round(dist(temp.box, q))} от времянки, норма ${LIMITS.septicToHouse}`);
+        const toBorder = Math.min(q.x - lot.x0, lot.x1 - q.x - q.w, lot.y1 - q.y - q.h);
+        if (toBorder < LIMITS.septicToBorder)
+          errs.push(`септик в ${Math.round(toBorder)} от границы участка, норма ${LIMITS.septicToBorder}`);
+        if (q.y - lot.y0 < LIMITS.septicToRed)
+          errs.push(`септик в ${Math.round(q.y - lot.y0)} от красной линии, норма ${LIMITS.septicToRed}`);
+        for (const p of [drive, ...paths].filter(Boolean))
+          if (overlap(q, p) > 0) errs.push(`септик под покрытием ${p.id} — крышку не открыть`);
+      } else errs.push('септика нет: канализации некуда деваться, центральной сети на улице нет');
+      // 38г. въезд: ворота не уже пожарного проезда и напротив гаражного
+      // фронта — заезд с улицы прямой, без манёвра поперёк двора
+      const gates = house.levels.flatMap(L => (L.windows || []).filter(w => w.kind === 'gate'));
+      if (fence.gate && gates.length) {
+        if (fence.gate.w < LIMITS.gateW)
+          errs.push(`въездные ворота ${fence.gate.w}, проезду нужно ${LIMITS.gateW}`);
+        const c0 = (Math.min(...gates.map(w => w.a)) + Math.max(...gates.map(w => w.b))) / 2;
+        const c1 = fence.gate.x + fence.gate.w / 2;
+        if (Math.abs(c1 - c0) > LIMITS.gateAxisSnap)
+          errs.push(`ось въездных ворот ${c1} против оси гаражного фронта ${c0} — заезд с манёвром`);
+      } else if (gates.length) errs.push('в заборе нет въездных ворот, а гараж есть');
+      // 38д. калитка напротив дорожки к дому
+      if (fence.wicket) {
+        if (fence.wicket.w < LIMITS.wicketW)
+          errs.push(`калитка ${fence.wicket.w}, норма ${LIMITS.wicketW}`);
+        const walk = paths[0];
+        if (walk && Math.abs((fence.wicket.x + fence.wicket.w / 2) - (walk.x + walk.w / 2)) > 300)
+          errs.push(`калитка не напротив дорожки: ось ${fence.wicket.x + fence.wicket.w / 2}, дорожка ${walk.x + walk.w / 2}`);
+      } else errs.push('в заборе нет калитки — на участок только через ворота');
+      // 38е. забор замкнут: каждая сторона покрыта панелями и створками
+      // без щелей и наложений — щель в заборе на чертеже не видна вовсе
+      for (const [name, along, at, a0, a1] of [
+        ['улица', 'x', lot.y0, lot.x0, lot.x1], ['СВ', 'x', lot.y1, lot.x0, lot.x1],
+        ['СЗ', 'y', lot.x0, lot.y0, lot.y1], ['ЮВ', 'y', lot.x1, lot.y0, lot.y1]]) {
+        const items = [...fence.segs, fence.gate, fence.wicket].filter(Boolean)
+          .filter(q => along === 'x' ? Math.abs(q.y + q.h / 2 - at) < fence.th : Math.abs(q.x + q.w / 2 - at) < fence.th)
+          .map(q => along === 'x' ? [q.x, q.x + q.w] : [q.y, q.y + q.h])
+          .sort((p, q) => p[0] - q[0]);
+        // угол закрывает панель перпендикулярной стороны — допуск в толщину
+        let cur = a0 + fence.th;
+        for (const [b0, b1] of items) {
+          if (b0 > cur + fence.th) { errs.push(`забор (${name}): щель ${Math.round(b0 - cur)} мм у ${Math.round(cur)}`); break; }
+          if (b1 < cur - fence.th) { errs.push(`забор (${name}): панели наложились у ${Math.round(b0)}`); break; }
+          cur = Math.max(cur, b1);
+        }
+        if (cur < a1 - fence.th) errs.push(`забор (${name}): не доходит до угла, кончается на ${Math.round(cur)}`);
+      }
+      // 38ж. покрытия не наезжают друг на друга и на дома; проезд примыкает
+      // к воротам забора — иначе от ворот до гаража полоса грунта
+      const covers = [drive, ...paths].filter(Boolean);
+      for (let i = 0; i < covers.length; i++)
+        for (let j = i + 1; j < covers.length; j++)
+          if (overlap(covers[i], covers[j]) > 100)
+            errs.push(`покрытия ${covers[i].id} и ${covers[j].id} наезжают друг на друга`);
+      for (const p of covers) {
+        if (overlap(p, houseBox) > 0) errs.push(`покрытие ${p.id} заезжает под дом`);
+        if (temp && overlap(p, temp.box) > 0) errs.push(`покрытие ${p.id} заезжает под времянку`);
+      }
+      if (fence.gate && drive) {
+        const [ga, gb] = [fence.gate.x, fence.gate.x + fence.gate.w];
+        if (drive.y > lot.y0 + 1 || Math.min(gb, drive.x + drive.w) - Math.max(ga, drive.x) < LIMITS.gateW - 200)
+          errs.push('проезд не примыкает к въездным воротам во всю их ширину');
+      }
     }
   }
 

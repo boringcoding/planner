@@ -17,7 +17,10 @@ const C = {
 
 // средняя ширина знака в долях кегля: Plex Mono моноширинный, Sans — оценка
 const ADV = { sans: 0.54, mono: 0.60 };
-import { roofGeom, roofHoles, flueTop, verandaGeom, pitGeom, porchGeom, outsideBits } from './roof.mjs';
+import { roofGeom, roofHoles, flueTop, verandaGeom, pitGeom, porchGeom, outsideBits, rampGeom } from './roof.mjs';
+
+import { plotGeom } from './plot.mjs';
+import { feedsGeom } from './systems.mjs';
 
 const MIN_FURN_FS = 165;   // мельче подпись мебели не рисуется — правило это ловит
 
@@ -951,6 +954,228 @@ export function renderRoof(house) {
   }
   for (const e of roofLeftTexts(house))
     s += t2svg(e.d, e.d.fs > 300 ? C.ink : C.ink60).replace('text-anchor="middle"', 'text-anchor="start"');
+
+  s += scaleBar(q.x1 - 3600, q.y1 + 2900);
+  s += compass(q.x1 + 1100, q.y0 - 900, house.site.frontAzimuth);
+  s += `</svg>`;
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// генплан
+//
+// Единственный лист, где виден весь участок разом: посадка дома с отступами,
+// времянка в дальнем углу, забор с воротами, септик и все наружные сети.
+// По отдельности каждая из этих вещей в норме, а конфликтуют они именно
+// здесь — на 19 метрах фронта.
+// ---------------------------------------------------------------------------
+
+export function plotSheet(house) {
+  const g = plotGeom(house);
+  return g && {
+    g, x0: g.lot.x0, y0: g.lot.y0, x1: g.lot.x1, y1: g.lot.y1,
+    padL: 4100, padT: 2900, padB: 9200, padR: 1700
+  };
+}
+
+const plotNotes = (house, g, feeds) => {
+  const q = g.septic, T = g.temp;
+  const S = house.shell;
+  const d2 = (a, b) => {
+    const dx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0);
+    const dy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0);
+    return (Math.hypot(dx, dy) / 1000).toFixed(1).replace('.', ',');
+  };
+  const hb = { x: 0, y: 0, w: S.w, h: S.h };
+  const sewerIn = feeds.find(f => f.id === 'vk.out1');
+  const water = feeds.find(f => f.id === 'vk.in2');
+  return [
+    `участок ${g.lot.w / 1000} × ${g.lot.d / 1000} м, въезд с юго-запада; дом в ${g.m.S / 1000} м от красной линии и ${g.m.W / 1000} м от северо-западной границы`,
+    ...(T ? [`времянка ${T.w / 1000} × ${T.h / 1000} м из блока — в ней живут на время стройки; разрыв до дома ${d2(hb, T.box)} м (несгораемые: норма 6)`] : []),
+    ...(q ? [`канализация — станция биоочистки: до дома ${d2(hb, q.box)} м, до времянки ${T ? d2(T.box, q.box) : '—'} м, до границы ${((g.lot.x1 - q.x - q.w) / 1000).toFixed(1).replace('.', ',')} м`] : []),
+    `септику с полем фильтрации здесь не встать: зоны с 5 м от обоих домов сжимаются в полосу шириной в метр — потому станция, обслуживание без машины`,
+    ...(sewerIn ? [`самотёк 2 %: вход в станцию ${mark(sewerIn.pts[sewerIn.pts.length - 1].z)}, очищенная вода — напорным сбросом в кювет улицы`] : []),
+    `вода — врезка у угла ЮЗ-ЮВ, ниже промерзания (−2,80): магистраль фронтом до ввода дома, тройник, дальше западной полосой к времянке`,
+    `футляры на воде ${(feeds.filter(f => f.kind === 'water').reduce((s, f) => s + (f.casingLen || 0), 0) / 1000).toFixed(1).replace('.', ',')} м: пересечение со сбросом и сближение с фундаментом в западной полосе`,
+    `кабельные вводы дома и времянки — от одной точки учёта, в 0,5 м и дальше от труб`
+  ];
+};
+
+// подписи генплана одним списком: рисуются и проверяются из него же
+export function plotTexts(house, systems) {
+  const q = plotSheet(house);
+  if (!q) return [];
+  const g = q.g, S = house.shell, out = [];
+  const add = (kind, owner, d) => out.push({ kind, owner, d });
+  const feeds = systems.flatMap(sys => feedsGeom(house, sys));
+
+  add('bld', 'дом', { t: `дом ${S.w / 1000} × ${(S.h / 1000).toString().replace('.', ',')}`, cx: S.w / 2, baseline: 3600, fs: 340, font: 'sans' });
+  if (g.temp) {
+    const T = g.temp;
+    add('bld', 'времянка', { t: `времянка ${T.w / 1000} × ${T.h / 1000}`, cx: T.x + T.w / 2, baseline: T.y + T.h / 2 - 100, fs: 320, font: 'sans' });
+    add('bld', 'времянка-роль', { t: 'жильё на время стройки', cx: T.x + T.w / 2, baseline: T.y + T.h / 2 + 360, fs: 220, font: 'mono' });
+  }
+  if (g.septic)
+    add('net', 'септик', { t: 'септик · АУ', cx: g.septic.x + g.septic.w / 2, baseline: g.septic.y + g.septic.h + 450, fs: 240, font: 'mono' });
+  add('net', 'кювет', { t: 'кювет · сброс', cx: 13700, baseline: g.lot.y0 - 350, fs: 220, font: 'mono' });
+  add('zone', 'проезд', { t: 'проезд', cx: g.drive.x + g.drive.w / 2, baseline: g.drive.y + g.drive.h / 2 + 80, fs: 260, font: 'mono' });
+  add('zone', 'двор', { t: 'двор', cx: 2500, baseline: 16300, fs: 260, font: 'mono' });
+  add('zone', 'сад', { t: 'сад', cx: 12200, baseline: 17800, fs: 260, font: 'mono' });
+
+  for (const d of chainTexts('y', q.x0 - 1250, [q.y0, 0, S.h, ...(g.temp ? [g.temp.y, g.temp.y + g.temp.h] : []), q.y1]))
+    add('dim', 'посадка Y', d);
+  for (const d of chainTexts('x', q.y1 + 950, [q.x0, 0, S.w, q.x1])) add('dim', 'посадка X', d);
+  for (const d of chainTexts('x', q.y1 + 1850, g.temp ? [q.x0, g.temp.x, g.temp.x + g.temp.w, q.x1] : [q.x0, q.x1]))
+    add('dim', 'времянка X', d);
+
+  const sides = house.site.sides;
+  add('side', 'ЮЗ', { t: sides.S, cx: (q.x0 + q.x1) / 2, baseline: q.y0 - 1000, fs: 400, font: 'mono', ls: 120 });
+  add('side', 'СВ', { t: sides.N, cx: (q.x0 + q.x1) / 2, baseline: q.y1 + 2500, fs: 340, font: 'mono', ls: 120 });
+  add('side', 'СЗ', { t: sides.W, cx: q.x0 - 2900, baseline: (q.y0 + q.y1) / 2, fs: 340, font: 'mono', ls: 80, rot: -1 });
+  add('side', 'ЮВ', { t: sides.E, cx: q.x1 + 800, baseline: (q.y0 + q.y1) / 2, fs: 340, font: 'mono', ls: 80, rot: 1 });
+  return out;
+}
+
+// штамп и примечания, выключенные влево — как на листе кровли
+export function plotLeftTexts(house, systems) {
+  const q = plotSheet(house);
+  if (!q) return [];
+  const feeds = systems.flatMap(sys => feedsGeom(house, sys));
+  const out = [
+    { kind: 'stamp', owner: 'заголовок', d: { t: `${house.project.title} · Генплан`, cx: q.x0, baseline: q.y0 - 2350, fs: 420, font: 'sans' } },
+    { kind: 'stamp', owner: 'единицы', d: { t: 'размеры в миллиметрах, отметки в метрах', cx: q.x0, baseline: q.y0 - 1900, fs: 240, font: 'mono' } }
+  ];
+  plotNotes(house, q.g, feeds).forEach((t, i) =>
+    out.push({ kind: 'note', owner: t.slice(0, 24), d: { t: `— ${t}`, cx: q.x0, baseline: q.y1 + 3350 + i * 420, fs: 200, font: 'mono' } }));
+  // легенда сетей: линии на чертеже без неё — просто цветные нитки
+  [['вода', SYS_C.vk], ['канализация самотёком', SYS_C.vk], ['сброс напорный', SYS_C.vk], ['кабель', SYS_C.eom]]
+    .forEach(([t], i) => out.push({
+      kind: 'legend', owner: t,
+      d: { t, cx: q.x0 + 1050 + (i % 2) * 5200, baseline: q.y1 + 6600 + Math.floor(i / 2) * 480, fs: 210, font: 'mono' }
+    }));
+  return out;
+}
+
+export function plotLabelBoxes(house, systems) {
+  const out = plotTexts(house, systems).map(e => ({ kind: e.kind, owner: e.owner, ...textBox(e.d) }));
+  for (const e of plotLeftTexts(house, systems)) {
+    const b = textBox(e.d);
+    out.push({ kind: e.kind, owner: e.owner, x: e.d.cx, y: b.y, w: b.w, h: b.h });
+  }
+  return out;
+}
+
+export function renderPlot(house, systems) {
+  const q = plotSheet(house);
+  if (!q) return '';
+  const g = q.g, S = house.shell;
+  const W = q.x1 - q.x0 + q.padL + q.padR, H = q.y1 - q.y0 + q.padT + q.padB;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${q.x0 - q.padL} ${q.y0 - q.padT} ${W} ${H}" font-family="IBM Plex Sans,system-ui,sans-serif">`;
+  s += `<rect x="${q.x0 - q.padL}" y="${q.y0 - q.padT}" width="${W}" height="${H}" fill="${C.paper}"/>`;
+  // тело участка
+  s += `<rect x="${q.x0}" y="${q.y0}" width="${g.lot.w}" height="${g.lot.d}" fill="${C.quiet}"/>`;
+
+  // покрытия: проезд и дорожки
+  for (const p of [g.drive, ...g.paths].filter(Boolean))
+    s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${C.garage}" stroke="${C.ink35}" stroke-width="35"/>`;
+  // пандусы ворот
+  for (const r of rampGeom(house))
+    s += `<rect x="${r.pad.x}" y="${r.pad.y}" width="${r.pad.w}" height="${r.pad.h}" fill="${C.garage}" stroke="${C.ink35}" stroke-width="35"/>`;
+
+  // дом — контуром кровли, с коньком и пятном стен пунктиром
+  const rg = roofGeom(house), o = rg.out;
+  s += `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="70"/>`;
+  s += `<line x1="${rg.ridge.x1}" y1="${rg.ridge.y1}" x2="${rg.ridge.x2}" y2="${rg.ridge.y2}" stroke="${C.ink}" stroke-width="90"/>`;
+  s += `<rect x="0" y="0" width="${S.w}" height="${S.h}" fill="none" stroke="${C.ink35}" stroke-width="45" stroke-dasharray="260 180"/>`;
+  // веранда с навесом и ступенями
+  const V = verandaGeom(house);
+  if (V) {
+    const v = V.v, b = V.canopyBox;
+    s += `<rect x="${v.x}" y="${v.y}" width="${v.w}" height="${v.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="55"/>`;
+    s += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="none" stroke="${C.ink35}" stroke-width="45" stroke-dasharray="300 200"/>`;
+    for (const st of V.deckSteps)
+      s += `<rect x="${st.x}" y="${st.y}" width="${st.w}" height="${st.h}" fill="none" stroke="${C.ink35}" stroke-width="45"/>`;
+  }
+  // выносы западного фасада: крыльцо и приямок видны и на генплане
+  for (const p of porchGeom(house)) {
+    s += `<rect x="${p.pad.x}" y="${p.pad.y}" width="${p.pad.w}" height="${p.pad.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="45"/>`;
+    for (const st of p.steps) s += `<rect x="${st.x}" y="${st.y}" width="${st.w}" height="${st.h}" fill="none" stroke="${C.ink35}" stroke-width="40"/>`;
+  }
+  for (const p of pitGeom(house))
+    s += `<rect x="${p.box.x}" y="${p.box.y}" width="${p.box.w}" height="${p.box.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="45"/>`;
+
+  // времянка: стены с дверью, окнами и крыльцом
+  if (g.temp) {
+    const T = g.temp;
+    s += `<rect x="${T.x}" y="${T.y}" width="${T.w}" height="${T.h}" fill="${C.ink}"/>`;
+    s += `<rect x="${T.x + T.t}" y="${T.y + T.t}" width="${T.w - 2 * T.t}" height="${T.h - 2 * T.t}" fill="${C.room}"/>`;
+    const cut = (side, a, b) => side === 'S' ? `<rect x="${a}" y="${T.y - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
+      : side === 'N' ? `<rect x="${a}" y="${T.y + T.h - T.t - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
+        : side === 'W' ? `<rect x="${T.x - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`
+          : `<rect x="${T.x + T.w - T.t - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`;
+    s += cut(T.door.side, T.door.a, T.door.b);
+    for (const w of T.windows || []) {
+      s += cut(w.side, w.a, w.b);
+      const horiz = w.side === 'S' || w.side === 'N';
+      const at = w.side === 'S' ? T.y + T.t / 2 : w.side === 'N' ? T.y + T.h - T.t / 2
+        : w.side === 'W' ? T.x + T.t / 2 : T.x + T.w - T.t / 2;
+      s += horiz
+        ? `<line x1="${w.a}" y1="${at}" x2="${w.b}" y2="${at}" stroke="${C.ink}" stroke-width="55"/>`
+        : `<line x1="${at}" y1="${w.a}" x2="${at}" y2="${w.b}" stroke="${C.ink}" stroke-width="55"/>`;
+    }
+    s += `<rect x="${T.porch.x}" y="${T.porch.y}" width="${T.porch.w}" height="${T.porch.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="45"/>`;
+  }
+
+  // сети: те же трассы, что в модели и в смете. Вода сплошная, самотёк
+  // длинным штрихом, напорный сброс коротким, кабель точечным
+  const feeds = systems.flatMap(sys => feedsGeom(house, sys).map(f => ({ ...f, sysId: sys.id })));
+  for (const f of feeds) {
+    const color = SYS_C[f.sysId] || C.ink;
+    const dash = f.kind === 'power' ? '80 160' : f.pressure ? '160 160' : f.kind === 'sewer' ? '420 220' : null;
+    s += `<polyline points="${f.pts.map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(' ')}" fill="none"`
+      + ` stroke="${color}" stroke-width="60" stroke-linejoin="round" stroke-linecap="round" opacity="0.8"`
+      + (dash ? ` stroke-dasharray="${dash}"` : '') + '/>';
+    for (const w of f.wells || [])
+      s += `<circle cx="${w.x}" cy="${w.y}" r="${w.d / 2 + 60}" fill="${C.room}" stroke="${color}" stroke-width="55"/>`;
+    for (const c of f.casings || [])
+      s += c.dir === 'v'
+        ? `<rect x="${c.x - 130}" y="${c.y - c.len / 2}" width="260" height="${c.len}" fill="none" stroke="${color}" stroke-width="45"/>`
+        : `<rect x="${c.x - c.len / 2}" y="${c.y - 130}" width="${c.len}" height="260" fill="none" stroke="${color}" stroke-width="45"/>`;
+  }
+  // септик
+  if (g.septic) {
+    const p = g.septic;
+    s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${C.room}" stroke="${SYS_C.vk}" stroke-width="80"/>`;
+    s += `<circle cx="${p.x + p.w / 2}" cy="${p.y + p.h / 2}" r="${Math.min(p.w, p.h) * 0.3}" fill="none" stroke="${SYS_C.vk}" stroke-width="50"/>`;
+  }
+
+  // забор: панели толстой линией, ворота и калитка — засечками с створкой
+  for (const f of g.fence.segs)
+    s += `<rect x="${f.x}" y="${f.y}" width="${f.w}" height="${f.h}" fill="${C.ink}"/>`;
+  for (const gt of [g.fence.gate, g.fence.wicket].filter(Boolean)) {
+    for (const e of [gt.x, gt.x + gt.w])
+      s += `<line x1="${e}" y1="${gt.y - 240}" x2="${e}" y2="${gt.y + gt.h + 240}" stroke="${C.ink}" stroke-width="70"/>`;
+    s += `<line x1="${gt.x}" y1="${gt.y + gt.h / 2}" x2="${gt.x + gt.w * 0.9}" y2="${gt.y + gt.h + 900}" stroke="${C.ink60}" stroke-width="45"/>`;
+  }
+
+  s += chain('y', q.x0 - 1250, [q.y0, 0, S.h, ...(g.temp ? [g.temp.y, g.temp.y + g.temp.h] : []), q.y1]);
+  s += chain('x', q.y1 + 950, [q.x0, 0, S.w, q.x1]);
+  s += chain('x', q.y1 + 1850, g.temp ? [q.x0, g.temp.x, g.temp.x + g.temp.w, q.x1] : [q.x0, q.x1]);
+
+  for (const e of plotTexts(house, systems)) {
+    if (e.kind === 'dim') continue;
+    s += t2svg(e.d, e.kind === 'side' && e.owner !== 'ЮЗ' ? C.ink35 : e.kind === 'zone' ? C.ink60 : C.ink,
+      halo(e.kind === 'net' || e.kind === 'zone' ? C.quiet : C.room, 180));
+  }
+  for (const e of plotLeftTexts(house, systems)) {
+    if (e.kind === 'legend') {
+      const d = e.d, color = /кабель/.test(d.t) ? SYS_C.eom : SYS_C.vk;
+      const dash = d.t === 'вода' ? '' : d.t.startsWith('сброс') ? ' stroke-dasharray="160 160"'
+        : d.t === 'кабель' ? ' stroke-dasharray="80 160"' : ' stroke-dasharray="420 220"';
+      s += `<line x1="${d.cx - 950}" y1="${d.baseline - 70}" x2="${d.cx - 150}" y2="${d.baseline - 70}" stroke="${color}" stroke-width="60"${dash}/>`;
+    }
+    s += t2svg(e.d, e.d.fs > 300 ? C.ink : C.ink60).replace('text-anchor="middle"', 'text-anchor="start"');
+  }
 
   s += scaleBar(q.x1 - 3600, q.y1 + 2900);
   s += compass(q.x1 + 1100, q.y0 - 900, house.site.frontAzimuth);
