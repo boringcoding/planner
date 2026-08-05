@@ -26,9 +26,8 @@ const PROG = {
   'first.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 3, sw: 2 },
   'first.r3': { light: 1, sw: 2 },
   'first.r4': { sock: [[1, 300]], light: 1, sw: 2 },
-  'first.r6': { light: 1, sw: 2 },                                    // тамбур
-  'first.r2': { sock: [[1, 1100]], light: 1, sw: 1 },
-  'first.r7': { light: 1, sw: 1 },                                    // кладовая при кухне
+  'first.r6': { light: 1, sw: 2 },                                    // тамбур: стены заняты тремя дверями и шкафом
+  'first.r2': { sock: [[2, 1100]], light: 1, sw: 1 },
   'first.r5': { sock: [[6, 1100], [4, 300]], power: 1, light: 4, sw: 3 },
   'second.r1': { sock: [[4, 300], [2, 1100]], light: 2, sw: 2 },
   'second.r2': { sock: [[4, 300], [2, 1100]], light: 2, sw: 1 },
