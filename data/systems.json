@@ -60,7 +60,7 @@
     { "id": "eom.p49", "level": "first", "room": "first.r1", "x": 4000, "y": 3500, "z": 3000, "kind": "light" },
     { "id": "eom.p50", "level": "first", "room": "first.r1", "x": 5800, "y": 3500, "z": 3000, "kind": "light" },
     { "id": "eom.p51", "level": "first", "room": "first.r1", "side": "N", "along": 1350, "z": 900, "kind": "switch" },
-    { "id": "eom.p52", "level": "first", "room": "first.r1", "side": "W", "along": 5150, "z": 900, "kind": "switch" },
+    { "id": "eom.p52", "level": "first", "room": "first.r1", "side": "W", "along": 4050, "z": 900, "kind": "switch" },
     { "id": "eom.p53", "level": "first", "room": "first.r3", "x": 2100, "y": 7950, "z": 3000, "kind": "light" },
     { "id": "eom.p54", "level": "first", "room": "first.r4", "side": "E", "along": 1550, "z": 300, "kind": "socket" },
     { "id": "eom.p55", "level": "first", "room": "first.r4", "x": 4865, "y": 8728, "z": 3000, "kind": "light" },

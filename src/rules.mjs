@@ -2,7 +2,7 @@
 // а не чинится единичной правкой координаты.
 
 import { labelBoxes, roofLabelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
-import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom } from './roof.mjs';
+import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits } from './roof.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -39,6 +39,17 @@ export const LIMITS = {
   flueOverRoof: 2000,      // выше — труба просит растяжек, а не «так сойдёт»
   canopyClear: 2200,       // низ навеса веранды над настилом
   pitToDoor: 800,          // от края приямка до наружной двери на той же стене
+  pitToPorch: 600,         // от бетонного борта приямка до края крыльца
+  pitFreeboard: 150,       // порог люка выше дна приямка: запас, пока не потечёт в дом
+  pitKerb: 50,             // борт крышки выше отмостки, иначе талая вода идёт в яму
+  porchRise: [120, 200],   // подъём ступени крыльца
+  porchDepth: 1200,        // глубина площадки перед дверью, открывающейся наружу
+  chuteSlope: [30, 45],    // уклон лотка: положе — дрова не едут, круче — летят мимо люка
+  chuteHead: 300,          // от верхней кромки лотка до крышки: куда сбрасывать
+  hatchOverWood: 0.5,      // доля люка, обязанная попасть на поленницу
+  porchStep: 150,          // перепад больше — уже не порог, а крыльцо со ступенями
+  facadeGap: 400,          // между любыми двумя выносами на одной стене
+  yardPass: 1200,          // ровная земля между самым дальним выносом и границей
   body: 550,               // ширина тела, которым проверяется проходимость пола
   nook: 0.5e6              // клочок свободного пола мельче — щель, а не проход
 };
@@ -698,8 +709,93 @@ export function check(house, brief) {
         if (gap < LIMITS.pitToDoor)
           errs.push(`приямок ${p.id} в ${Math.max(0, Math.round(gap))} мм от двери ${w.id} — выход из неё в яму`);
       }
-    if (p.floor >= p.top) errs.push(`дно приямка ${p.id} на ${p.floor} не ниже земли ${p.top}`);
+    if (p.floor >= p.ground) errs.push(`дно приямка ${p.id} на ${p.floor} не ниже земли ${p.ground}`);
+
+    // 31а. дно ниже порога люка: этот перепад — не оплошность, а запас.
+    // Забьётся дренаж — вода стоит в яме, а не идёт через порог в дровяник
+    if (p.freeboard < LIMITS.pitFreeboard)
+      errs.push(`приямок ${p.id}: порог люка выше дна на ${p.freeboard}, нужно ${LIMITS.pitFreeboard}`);
+    // борт крышки выше отмостки: заподлицо — значит вся талая вода со стены в яме
+    if (p.kerb < LIMITS.pitKerb)
+      errs.push(`приямок ${p.id}: борт крышки ${p.kerb} над отмосткой, нужно ${LIMITS.pitKerb}`);
+    // 31б. лоток. Без него дрова остаются лежать на дне ямы, и «падают прямо
+    // к котлу» превращается в «лезь в яму и подавай через порог руками»
+    const [lo, hi] = LIMITS.chuteSlope;
+    if (p.chute < lo || p.chute > hi)
+      errs.push(`лоток приямка ${p.id}: уклон ${p.chute}°, норма ${lo}…${hi}`);
+    if (p.top - p.chuteTop < LIMITS.chuteHead)
+      errs.push(`лоток приямка ${p.id}: до крышки ${p.top - p.chuteTop} мм, сбрасывать некуда`);
   }
+
+  // 31в. люк выходит на поленницу, а не рядом с ней. На плане люк в стене и
+  // штабель дров — две независимые фигуры, и разъезжаются они молча
+  for (const L of house.levels)
+    for (const w of (L.windows || []).filter(x => x.kind === 'hatch')) {
+      const band = windowBand(w, S, 1200);
+      const wood = (L.furniture || []).filter(f => f.sym === 'firewood');
+      const hit = wood.reduce((s, f) => s + overlap(band, box(f)), 0);
+      if (!wood.length) { errs.push(`люк ${w.id}: в помещении нет поленницы`); continue; }
+      const need = LIMITS.hatchOverWood * area(band);
+      if (hit < need)
+        errs.push(`люк ${w.id} попадает на поленницу на ${Math.round(100 * hit / area(band))}%, нужно ${Math.round(100 * LIMITS.hatchOverWood)}%`);
+    }
+
+  // 33. крыльцо. Порог наружной двери выше земли — это ступени, а не «дверь
+  // в стене»: без них из гаража шагают в пустоту на 300 мм вниз
+  for (const L of house.levels)
+    for (const w of (L.windows || []).filter(x => x.kind === 'door' || x.kind === 'entrance')) {
+      // с веранды шагают на настил, а не в грунт: там отсчёт от настила
+      const v = L.veranda;
+      const onDeck = v && (v.x >= S.w ? w.side === 'E' : w.side === 'W')
+        && Math.min(w.b, v.y + v.h) - Math.max(w.a, v.y) > 0;
+      const level = onDeck ? L.base + v.deck : (house.site.ground ?? -300);
+      const drop = L.base + (w.sill || 0) - level;
+      if (drop > LIMITS.porchStep && !w.porch)
+        errs.push(`дверь ${w.id}: порог на ${drop} выше земли, а крыльца нет`);
+    }
+  for (const q of porchGeom(house)) {
+    const [lo, hi] = LIMITS.porchRise;
+    if (q.rise < lo || q.rise > hi)
+      errs.push(`крыльцо ${q.id}: подъём ступени ${q.rise}, норма ${lo}…${hi}`);
+    if (q.tread < LIMITS.treadMin)
+      errs.push(`крыльцо ${q.id}: проступь ${q.tread} меньше ${LIMITS.treadMin}`);
+    // дверь открывается наружу — полотно проходит над площадкой, и площадка
+    // обязана быть глубже полотна, иначе открывающий стоит на ступени
+    const d = q.horiz ? q.pad.h : q.pad.w;
+    if (d < LIMITS.porchDepth)
+      errs.push(`крыльцо ${q.id}: площадка ${d} мельче ${LIMITS.porchDepth} — дверь открывается над ступенью`);
+  }
+
+  // 34. выносы за наружную стену — дымоходы, приямок, крыльцо — разводятся
+  // друг с другом и упираются в отступ до границы участка. По отдельности
+  // каждый помещается; вместе они и составляют фасад, которого нет на плане
+  const bits = outsideBits(house);
+  const setback = (house.project && house.project.plot && house.project.plot.setback) || 0;
+  for (const b of bits) {
+    if (setback && setback - b.reach < LIMITS.yardPass)
+      errs.push(`${b.kind} ${b.id} вынесен на ${b.reach} — до границы остаётся ${setback - b.reach}, нужно ${LIMITS.yardPass} на проход`);
+    // наружный дымоход стоит перед стеной, и окно за ним смотрит в трубу
+    if (b.kind !== 'дымоход') continue;
+    for (const L of house.levels)
+      for (const w of L.windows || []) {
+        if (w.side !== b.side) continue;
+        if (Math.min(w.b, b.band[1]) - Math.max(w.a, b.band[0]) > 0)
+          errs.push(`${b.kind} ${b.id} стоит перед окном ${w.id}`);
+      }
+  }
+  for (let i = 0; i < bits.length; i++)
+    for (let j = i + 1; j < bits.length; j++) {
+      const a = bits[i], b = bits[j];
+      if (a.side !== b.side) continue;
+      const gap = Math.max(a.band[0] - b.band[1], b.band[0] - a.band[1]);
+      // приямок с крыльцом разводятся шире прочего: с крыльца сходят вслепую,
+      // а крышка ямы бывает откинута. 400 «на отделку» тут не годятся
+      const kinds = [a.kind, b.kind];
+      const need = kinds.includes('приямок') && kinds.includes('крыльцо')
+        ? LIMITS.pitToPorch : LIMITS.facadeGap;
+      if (gap < need)
+        errs.push(`${a.kind} ${a.id} и ${b.kind} ${b.id}: по фасаду ${Math.max(0, Math.round(gap))} мм, нужно ${need}`);
+    }
 
   // 32. лист кровли раскладывается теми же рамками, что и планы этажей,
   // и проверяется так же. Подписей на нём мало, но они привязаны к отметкам:

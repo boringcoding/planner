@@ -6,7 +6,7 @@
 // не видно границы, всегда «дешевле» настоящей.
 
 import { bill } from './systems.mjs';
-import { roofGeom, verandaGeom, pitGeom, flueTop } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop } from './roof.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
 const mm = v => v / 1000;                      // мм -> м
@@ -145,6 +145,11 @@ export function quantities(house, systems) {
   q.verandaRail = V ? mm(V.rail) : 0;
   // приямок люка для дров: коробка со стенками, дном и решёткой
   q.pits = pitGeom(house).length;
+  // крыльцо считается по модели, а не «одно, наверное, есть»: наружных дверей
+  // с порогом выше земли может стать две, и вторая молча не попадёт в смету
+  const porches = porchGeom(house);
+  q.porches = porches.length;
+  q.porchSteps = porches.reduce((s, q0) => s + q0.steps.length, 0);
 
   // ---- инженерия из собственных ведомостей --------------------------------
   q.sys = {};
@@ -233,7 +238,7 @@ export function estimate(house, systems, prices) {
 
   add('Лестницы, крыльцо, веранда, отмостка', [
     ['stairConcrete', q.stairConcrete], ['stepFinish', q.steps], ['railing', q.railing],
-    ['blind', q.blind], ['porch', 1],
+    ['blind', q.blind], ['porch', q.porches],
     ['verandaDeck', q.veranda], ['verandaRoof', q.verandaRoof], ['verandaRail', q.verandaRail],
     ['pit', q.pits]
   ]);

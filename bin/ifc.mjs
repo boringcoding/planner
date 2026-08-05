@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, flueTop } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop } from '../src/roof.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -54,8 +54,11 @@ const holes = house.levels.reduce((s, L, i) => s
   + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length, 0);
 
 // перекрытия: над каждым уровнем, плита основания, настил веранды, навес,
-// два ската и дно каждого приямка. Считается по модели, а не по глазу
-const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2 + pits.length;
+// два ската, дно и лоток каждого приямка, площадка каждого крыльца.
+// Считается по модели, а не по глазу
+const porches = porchGeom(house);
+const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2
+  + 2 * pits.length + porches.length;
 const flues = house.levels[house.levels.length - 1].flues || [];
 
 const want = [
@@ -65,7 +68,8 @@ const want = [
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],
   ['IFCPILE', V ? V.piles.length : 0], ['IFCCOLUMN', V ? V.posts.length : 0],
-  ['IFCBEAM', (V ? 2 : 0) + roofOn * 3], ['IFCPLATE', pits.length]
+  ['IFCBEAM', (V ? 2 : 0) + roofOn * 3], ['IFCPLATE', pits.length],
+  ['IFCSTAIRFLIGHT', porches.length]
 ];
 for (const [t, n] of want)
   if (count(t) !== n) errs.push(`${t}: ${count(t)}, в модели ${n}`);
@@ -287,6 +291,27 @@ if (house.roof) {
   }
 }
 
+// 9. Крыльцо ходится ногами так же, как лестница: нижняя ступень обязана лечь
+// на землю, а не повиснуть над ней. Тела ступеней разворачиваются обратно
+// в отметки — ошибка в знаке подъёма даёт то же число тел и ту же площадь
+for (const q of porches) {
+  const e = [...ents.values()].find(x => x.type === 'IFCSTAIRFLIGHT'
+    && arg(x.args)[7].replace(/'/g, '') === `${q.id}.steps`);
+  if (!e) { errs.push(`крыльцо ${q.id}: ступеней в выгрузке нет`); continue; }
+  const p = arg(e.args);
+  const base = house.levels.find(L => (L.windows || []).some(w => w.id === q.win)).base;
+  const tops = bodyItems(p[6]).map(rectOf).map(b => base + b.dx * 0 + b.top).sort((a, b) => b - a);
+  // ступени пишутся от низа −150 под землёй: верх i-й = landZ − rise·(i+1)
+  const bottom = q.ground - 150;
+  const got = tops.map(t => Math.round(bottom + t));
+  const want = q.steps.map((_, i) => q.landZ - q.rise * (i + 1));
+  for (let i = 0; i < want.length; i++)
+    if (Math.abs(got[i] - want[i]) > 1)
+      errs.push(`крыльцо ${q.id}: ступень ${i + 1} на ${got[i]}, по расчёту ${want[i]}`);
+  if (got.length && Math.abs(got[got.length - 1] - q.ground) > 1)
+    errs.push(`крыльцо ${q.id}: нижняя ступень на ${got[got.length - 1]}, земля на ${q.ground}`);
+}
+
 const kb = (text.length / 1024).toFixed(0);
 if (errs.length) {
   console.log(`Файл записан, но не сходится (${errs.length}):\n`);
@@ -301,4 +326,4 @@ if (house.roof) {
   console.log(`  кровля ${g.area.toFixed(1)} м² под ${house.roof.pitch}°, конёк ${(g.ridgeZ / 1000).toFixed(3)} (отметки сверены)`);
 }
 if (V) console.log(`  веранда: свай ${V.piles.length} · стоек ${V.posts.length} · навес ${V.canopyArea.toFixed(1)} м²`);
-if (pits.length) console.log(`  приямков ${pits.length} · стенок ${3 * pits.length} · решёток ${pits.length}`);
+if (pits.length) console.log(`  приямков ${pits.length} · стенок ${3 * pits.length} · крышек ${pits.length}`);

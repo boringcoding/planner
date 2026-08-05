@@ -63,7 +63,7 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
-import { roofGeom, verandaGeom, pitGeom, flueTop } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop } from './roof.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
   const S = house.shell;
@@ -466,11 +466,49 @@ export function ifc(house, systems = [], opt = {}) {
       place(s.pl, b.x + b.w / 2, Y(b.y + b.h / 2), q.floor - s.lv.base - t),
       bodyOf([boxSolid(b.w, b.h, t)]), str(`${q.id}.floor`), '.BASESLAB.']);
     put(s.st, floor);
-    const cover = E('IFCPLATE', [G(`pitcover:${q.id}`), owner, str('Решётка приямка'), '$', '$',
+    const cover = E('IFCPLATE', [G(`pitcover:${q.id}`), owner, str('Крышка приямка'), '$', '$',
       place(s.pl, b.x + b.w / 2, Y(b.y + b.h / 2), q.top - s.lv.base - 60),
       bodyOf([boxSolid(b.w, b.h, 60)]), str(`${q.id}.cover`), '.NOTDEFINED.']);
     put(s.st, cover);
     addProps(cover, `pitcover:${q.id}`, [['id', q.id], ['floor', q.floor], ['top', q.top]]);
+
+    // лоток: наклонное дно от порога люка вверх-наружу. Плоское дно в выгрузке
+    // выглядит так же, а дрова с него в люк не идут
+    const c = q.clear, cp = q.chute * Math.PI / 180;
+    const axis = q.side === 'W' ? [Math.sin(cp), 0, Math.cos(cp)]
+      : q.side === 'E' ? [-Math.sin(cp), 0, Math.cos(cp)]
+        : q.side === 'S' ? [0, -Math.sin(cp), Math.cos(cp)] : [0, Math.sin(cp), Math.cos(cp)];
+    const chute = E('IFCSLAB', [G(`pitchute:${q.id}`), owner, str('Лоток приямка'), '$', '$',
+      placeAx(s.pl, [c.x + c.w / 2, Y(c.y + c.h / 2), (q.sillZ + q.chuteTop) / 2 - s.lv.base],
+        axis, horiz ? [1, 0, 0] : [0, 1, 0]),
+      bodyOf([boxSolid(horiz ? c.w : c.h, q.chuteLen, 100, 0, 0, -100)]),
+      str(`${q.id}.chute`), '.FLOOR.']);
+    put(s.st, chute);
+    addProps(chute, `pitchute:${q.id}`, [['id', `${q.id}.chute`], ['slope', q.chute], ['len', q.chuteLen]]);
+  }
+
+  // ---- крыльцо -----------------------------------------------------------
+  // Порог наружной двери выше земли, и без площадки со ступенями из двери
+  // шагают в грунт. В модели это видно сразу, на плане — никогда
+  for (const q of porchGeom(house)) {
+    const s = storeys.find(x => (x.lv.windows || []).some(w => w.id === q.win));
+    if (!s) continue;
+    const th = 150, cx = q.pad.x + q.pad.w / 2, cy = Y(q.pad.y + q.pad.h / 2);
+    const pad = E('IFCSLAB', [G(`porch:${q.id}`), owner, str('Площадка крыльца'), '$', '$',
+      place(s.pl, cx, cy, q.landZ - s.lv.base - th),
+      bodyOf([boxSolid(q.pad.w, q.pad.h, th)]), str(`${q.id}.pad`), '.LANDING.']);
+    put(s.st, pad);
+    addProps(pad, `porch:${q.id}`, [['id', q.id], ['rise', q.rise], ['tread', q.tread],
+    ['reach', q.reach], ['landing', q.landZ]]);
+
+    const bottom = q.ground - th - s.lv.base;
+    const solids = q.steps.map((st, i) => boxSolid(st.w, st.h,
+      q.landZ - q.rise * (i + 1) - s.lv.base - bottom,
+      st.x + st.w / 2 - cx, Y(st.y + st.h / 2) - cy, bottom));
+    const flight = E('IFCSTAIRFLIGHT', [G(`porchsteps:${q.id}`), owner, str('Ступени крыльца'), '$', '$',
+      place(s.pl, cx, cy, 0), bodyOf(solids), str(`${q.id}.steps`),
+      String(q.steps.length), String(q.steps.length), num(q.rise), num(q.tread), '.STRAIGHT.']);
+    put(s.st, flight);
   }
 
   // ---- помещения ---------------------------------------------------------

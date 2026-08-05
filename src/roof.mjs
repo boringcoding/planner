@@ -128,26 +128,126 @@ export function verandaGeom(house) {
 }
 
 // ─────────────────────────────────────────────────────────────── приямок
-// Люк в стене цоколя, снаружи бетонная коробка с решёткой: дрова падают
+// Люк в стене цоколя, снаружи бетонная коробка с крышкой: дрова падают
 // внутрь, вода уходит в дренаж, крышка держит человека.
+//
+// Хранится решение — наружный габарит коробки, толщина стенки, насколько дно
+// ниже порога люка, высота борта над отмосткой и уклон лотка. Считается всё
+// остальное: свет ямы, отметки дна, порога и крышки, длина лотка и запас,
+// который яма держит, прежде чем вода пойдёт через порог в дровяник.
+//
+// Уровень земли — общий для площадки (site.ground), а не свойство приямка:
+// два разных «уровня земли» в одном доме однажды разъедутся.
 export function pitGeom(house) {
   const out = [];
   for (const L of house.levels)
     for (const w of L.windows || []) {
       if (w.kind !== 'hatch') continue;
       const P = w.pit || {}, S = house.shell, ground = house.site.ground ?? -300;
-      const side = P.side ?? 250, depth = P.out ?? 900;
+      const side = P.side ?? 400, depth = P.out ?? 1250, t = P.wall ?? 150;
       const a = w.a - side, b = w.b + side;
+      // box — наружный габарит бетонной коробки, стенки стоят внутрь него
       const box = w.side === 'W' ? { x: -depth, y: a, w: depth, h: b - a }
         : w.side === 'E' ? { x: S.w, y: a, w: depth, h: b - a }
           : w.side === 'S' ? { x: a, y: -depth, w: b - a, h: depth }
             : { x: a, y: S.h, w: b - a, h: depth };
+      // свет ямы: с трёх сторон стенка, с четвёртой — стена дома
+      const horiz = w.side === 'S' || w.side === 'N';
+      const clear = horiz
+        ? { x: box.x + t, y: w.side === 'S' ? box.y + t : box.y, w: box.w - 2 * t, h: box.h - t }
+        : { x: w.side === 'W' ? box.x + t : box.x, y: box.y + t, w: box.w - t, h: box.h - 2 * t };
+      const sillZ = L.base + (w.sill || 0);                 // порог люка
+      const floor = sillZ - (P.below ?? 200);               // дно приямка
+      const kerb = P.kerb ?? 100;
+      // лоток: от порога люка вниз-наружу до дальней стенки. Дрова, сброшенные
+      // с земли, скатываются в люк, а не остаются лежать на дне ямы
+      const run = horiz ? clear.h : clear.w;
+      const rise = Math.round(run * Math.tan(rad(P.chute ?? 34)));
       out.push({
-        id: w.id.replace(/\.g/, '.pit'), win: w.id, side: w.side, box,
-        floor: L.base + (w.sill || 0) - (P.below ?? 200),   // дно приямка
-        top: P.ground ?? ground,                            // отметка земли и крышки
-        wall: P.wall ?? 150
+        id: w.id.replace(/\.g/, '.pit'), win: w.id, side: w.side, box, clear,
+        floor, sillZ, ground, kerb,
+        top: ground + kerb,                                 // верх борта и крышки
+        depth: ground + kerb - floor,                       // от крышки до дна
+        freeboard: sillZ - floor,                           // запас до перелива в дом
+        hold: (sillZ - floor) * clear.w * clear.h / 1e9,    // тот же запас, м³
+        wall: t,
+        chute: P.chute ?? 34, chuteRun: run, chuteTop: floor + (P.below ?? 200) + rise,
+        chuteLen: Math.round(Math.hypot(run, rise))
       });
     }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────── крыльцо
+// Наружная дверь с порогом выше земли — это площадка и ступени, а не «дверь
+// в стене». На плане их не было, и дверь гаража выходила прямо в грунт.
+//
+// Хранится решение: глубина площадки, число ступеней, проступь и насколько
+// площадка ниже порога. Считается подъём ступени, полный вынос от стены и
+// полоса фасада, которую крыльцо занимает, — по ней оно разводится с приямком.
+export function porchGeom(house) {
+  const out = [];
+  for (const L of house.levels)
+    for (const w of L.windows || []) {
+      if (!w.porch) continue;
+      const P = w.porch, S = house.shell, ground = house.site.ground ?? -300;
+      const side = P.side ?? 150, depth = P.out ?? 1200;
+      const n = P.steps ?? 1, tread = P.tread ?? 300;
+      const a = w.a - side, b = w.b + side;
+      const landZ = L.base + (w.sill || 0) - (P.drop ?? 30);
+      const horiz = w.side === 'S' || w.side === 'N';
+      // площадка вплотную к стене, ступени уходят от неё наружу
+      const pad = w.side === 'W' ? { x: -depth, y: a, w: depth, h: b - a }
+        : w.side === 'E' ? { x: S.w, y: a, w: depth, h: b - a }
+          : w.side === 'S' ? { x: a, y: -depth, w: b - a, h: depth }
+            : { x: a, y: S.h, w: b - a, h: depth };
+      const steps = [];
+      for (let i = 0; i < n; i++) {
+        const k = i + 1;
+        steps.push(w.side === 'W' ? { x: -depth - k * tread, y: a, w: tread, h: b - a }
+          : w.side === 'E' ? { x: S.w + depth + (k - 1) * tread, y: a, w: tread, h: b - a }
+            : w.side === 'S' ? { x: a, y: -depth - k * tread, w: b - a, h: tread }
+              : { x: a, y: S.h + depth + (k - 1) * tread, w: b - a, h: tread });
+      }
+      out.push({
+        id: w.id.replace(/\.g/, '.porch'), win: w.id, side: w.side, pad, steps,
+        landZ, ground, tread, horiz,
+        sillZ: L.base + (w.sill || 0), drop: P.drop ?? 30,
+        depth: horiz ? pad.h : pad.w,
+        rise: Math.round((landZ - ground) / n),             // подъём ступени
+        reach: depth + n * tread,                           // полный вынос от стены
+        band: horiz ? [pad.x, pad.x + pad.w] : [pad.y, pad.y + pad.h]
+      });
+    }
+  return out;
+}
+
+// Всё, что вынесено за наружную стену: дымоход, приямок, крыльцо. Собирается
+// одним списком, потому что разводятся они друг с другом, а не каждый сам по
+// себе, и упираются в один и тот же отступ до границы участка.
+export function outsideBits(house) {
+  const out = [], seen = new Set();
+  for (const L of house.levels)
+    for (const f of L.flues || []) {
+      if (!f.outside || seen.has(f.id.split('.').pop())) continue;
+      seen.add(f.id.split('.').pop());
+      const side = f.x + f.w === 0 ? 'W' : f.x === house.shell.w ? 'E'
+        : f.y + f.h === 0 ? 'S' : 'N';
+      const horiz = side === 'S' || side === 'N';
+      out.push({
+        id: f.id, kind: 'дымоход', side, box: f,
+        reach: horiz ? f.h : f.w, band: horiz ? [f.x, f.x + f.w] : [f.y, f.y + f.h]
+      });
+    }
+  for (const p of pitGeom(house)) {
+    const horiz = p.side === 'S' || p.side === 'N';
+    out.push({
+      id: p.id, kind: 'приямок', side: p.side, box: p.box,
+      reach: horiz ? p.box.h : p.box.w,
+      band: horiz ? [p.box.x, p.box.x + p.box.w] : [p.box.y, p.box.y + p.box.h]
+    });
+  }
+  for (const q of porchGeom(house))
+    out.push({ id: q.id, kind: 'крыльцо', side: q.side, box: q.pad, reach: q.reach, band: q.band });
   return out;
 }

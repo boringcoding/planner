@@ -17,7 +17,7 @@ const C = {
 
 // средняя ширина знака в долях кегля: Plex Mono моноширинный, Sans — оценка
 const ADV = { sans: 0.54, mono: 0.60 };
-import { roofGeom, roofHoles, flueTop, verandaGeom, pitGeom } from './roof.mjs';
+import { roofGeom, roofHoles, flueTop, verandaGeom, pitGeom, porchGeom, outsideBits } from './roof.mjs';
 
 const MIN_FURN_FS = 165;   // мельче подпись мебели не рисуется — правило это ловит
 
@@ -180,14 +180,18 @@ export function sheet(house, opt = {}) {
   const S = house.shell;
   const showDims = opt.dims !== false;
   const vExt = Math.max(0, ...house.levels.map(l => (l.veranda ? l.veranda.w : 0)));
-  const dx = -1250;              // цепочка размеров уровня
-  const dx2 = -2150;             // общий габарит
-  const wx = -3000;              // подпись стороны СЗ
-  const ex = S.w + vExt + 800;   // подпись стороны ЮВ — за верандой
+  // цепочка отодвигается за то, что вынесено на западный фасад: приямок и
+  // крыльцо гаража стоят на грунте слева от плана, и размерная линия,
+  // прибитая к −1250, проходит прямо по ступеням
+  const wExt = Math.max(0, ...outsideBits(house).filter(b => b.side === 'W').map(b => b.reach));
+  const dx = -Math.max(1250, wExt + 400);   // цепочка размеров уровня
+  const dx2 = dx - 900;                     // общий габарит
+  const wx = dx2 - 850;                     // подпись стороны СЗ
+  const ex = S.w + vExt + 800;              // подпись стороны ЮВ — за верандой
   return {
     S, showDims, dx, dx2, wx, ex,
     legendY: S.h + 3050,          // полоса условных обозначений и масштаба
-    padL: 3900, padT: 2900, padB: 4800, padR: vExt + 1700
+    padL: -wx + 900, padT: 2900, padB: 4800, padR: vExt + 1700
   };
 }
 
@@ -627,6 +631,13 @@ export function renderLevel(house, L, opt = {}) {
           s += horizGrid
             ? `<line x1="${b.x + t}" y1="${b.y + 60}" x2="${b.x + t}" y2="${b.y + b.h - 60}" stroke="${C.ink35}" stroke-width="40"/>`
             : `<line x1="${b.x + 60}" y1="${b.y + t}" x2="${b.x + b.w - 60}" y2="${b.y + t}" stroke="${C.ink35}" stroke-width="40"/>`;
+        // лоток: дно ямы падает к люку, и на плане это стрелка уклона.
+        // Без неё яма выглядит корытом с ровным дном, а дрова в ней и остаются
+        const c = P.clear, cy = c.y + c.h / 2, cx = c.x + c.w / 2;
+        s += P.side === 'W' ? arrow(c.x + 100, cy, c.x + c.w - 100, cy)
+          : P.side === 'E' ? arrow(c.x + c.w - 100, cy, c.x + 100, cy)
+            : P.side === 'S' ? arrow(cx, c.y + 100, cx, c.y + c.h - 100)
+              : arrow(cx, c.y + c.h - 100, cx, c.y + 100);
       }
     } else if (w.kind === 'gate') {
       s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="420 220"/>`;
@@ -641,6 +652,16 @@ export function renderLevel(house, L, opt = {}) {
         }
     }
   }
+  // Крыльцо: площадка вплотную к стене и ступени от неё наружу. На плане
+  // дверь в стене выглядит одинаково и с крыльцом, и без — а без него
+  // из гаража шагают в грунт на 300 мм вниз
+  for (const q of porchGeom(house)) {
+    if (!(L.windows || []).some(w => w.id === q.win)) continue;
+    s += `<rect x="${q.pad.x}" y="${q.pad.y}" width="${q.pad.w}" height="${q.pad.h}" fill="${C.paper}" stroke="${C.ink}" stroke-width="90"/>`;
+    for (const st of q.steps)
+      s += `<rect x="${st.x}" y="${st.y}" width="${st.w}" height="${st.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70"/>`;
+  }
+
   // шахты: стояк канализации крестом, дымоход с кружком внутри
   if (L.riser) {
     const q = L.riser;
