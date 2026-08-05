@@ -72,7 +72,7 @@ const flues = house.levels[house.levels.length - 1].flues || [];
 // магистраль, плюс жёлоб и трубы водостока. Класс — по виду точки,
 // как в экспорте: воздуховоды, трубы, кабельные каналы
 const segCls = kind => kind === 'supply' || kind === 'exhaust' ? 'IFCDUCTSEGMENT'
-  : ['cold', 'hot', 'drain', 'radiator', 'convector'].includes(kind) ? 'IFCPIPESEGMENT'
+  : ['cold', 'hot', 'drain', 'radiator', 'convector', 'ufh'].includes(kind) ? 'IFCPIPESEGMENT'
     : 'IFCCABLECARRIERSEGMENT';
 const nSeg = { IFCPIPESEGMENT: 0, IFCDUCTSEGMENT: 0, IFCCABLECARRIERSEGMENT: 0 };
 const bills = systems.map(sys => ({ sys, b: bill(house, sys) }));

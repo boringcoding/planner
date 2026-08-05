@@ -3,7 +3,7 @@
 // дверном полотне и вытяжка, которой нет, — всё это на картинке незаметно.
 
 import { face, faceItems, SIDES } from './model.mjs';
-import { KIND, RESERVE, place, reach, bill, runSegments3d, trunkSegments3d, segsLen } from './systems.mjs';
+import { KIND, RESERVE, UFH_STEP, place, reach, bill, runSegments3d, trunkSegments3d, segsLen } from './systems.mjs';
 import { roomBlock } from './render.mjs';
 import { elevBoxes, elevationRooms } from './elev.mjs';
 
@@ -140,6 +140,25 @@ export function checkSystems(house, data) {
 
       // 8. до точки есть трасса
       if (!reach(house, sys, p)) E(`${tag}: не удалось проложить трассу от узла`);
+
+      // 8а. зона контура тёплого пола: лежит в своём помещении, не наезжает
+      // на соседний контур, не длиннее нормы и накрывает пол, а не угол
+      if (p.kind === 'ufh') {
+        if (p.x < room.x || p.y < room.y || p.x + p.w > room.x + room.w || p.y + p.h > room.y + room.h)
+          E(`${tag}: зона контура вылезает из «${room.name}»`);
+        const len = p.w * p.h / UFH_STEP;
+        if (len > 120000)
+          E(`${tag}: контур ${Math.round(len / 1000)} м длиннее 120 — делить на два`);
+        for (const q of sys.points) {
+          if (q === p || q.kind !== 'ufh' || q.room !== p.room) continue;
+          if (p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h && p.id < q.id)
+            E(`${tag}: зоны контуров ${p.id} и ${q.id} наезжают друг на друга`);
+        }
+        const cover = sys.points.filter(q => q.kind === 'ufh' && q.room === p.room)
+          .reduce((s2, q) => s2 + q.w * q.h, 0);
+        if (cover < 0.75 * room.w * room.h)
+          E(`${tag}: контуры накрывают ${Math.round(100 * cover / (room.w * room.h))}% пола «${room.name}», нужно 75`);
+      }
     }
 
     // 9. программа: свет и извещатель в каждом помещении, вытяжка в мокрых,
@@ -161,8 +180,19 @@ export function checkSystems(house, data) {
           // помещение, открытое проёмом без полотна, отапливается вместе с соседним
           const open = (L.openings || []).some(o => o.kind === 'pass'
             && o.x > r.x - 300 && o.x < r.x + r.w + 300 && o.y > r.y - 300 && o.y < r.y + r.h + 300);
-          if (!['stair', 'wardrobe'].includes(r.tag) && !has(r.id, 'radiator') && !has(r.id, 'convector') && !own && !open)
+          if (!['stair', 'wardrobe'].includes(r.tag) && !has(r.id, 'radiator') && !has(r.id, 'convector')
+            && !has(r.id, 'ufh') && !own && !open)
             E(`«${r.name}» (${L.title}) ничем не отапливается`);
+          // 9а. плитка мокрого помещения без контура в стяжке — ледяной пол
+          if (r.tag === 'wet' && !has(r.id, 'ufh'))
+            E(`«${r.name}» (${L.title}) без контура тёплого пола`);
+          // 9б. нижний уровень стоит плитой на грунте: обитаемое помещение
+          // без своей печи греет контур, радиатор греет воздух над холодным полом
+          const stove = (L.furniture || []).some(g => g.sym === 'heaterSauna'
+            && g.x > r.x && g.x < r.x + r.w && g.y > r.y && g.y < r.y + r.h);
+          if (L === house.levels[0] && ['live', 'service'].includes(r.use) && !r.tag
+            && !stove && !has(r.id, 'ufh'))
+            E(`«${r.name}» (${L.title}): пол по грунту без контура тёплого пола`);
         }
       }
     if (sys.id === 'vk')

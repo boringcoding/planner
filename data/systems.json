@@ -1747,6 +1747,61 @@
           "along": 1450,
           "z": 2500,
           "kind": "exhaust"
+        },
+        {
+          "id": "ov.p37",
+          "level": "cokol",
+          "room": "cokol.r4",
+          "kind": "ufh",
+          "x": 5900,
+          "y": 9270,
+          "w": 1600,
+          "h": 2730,
+          "z": 30
+        },
+        {
+          "id": "ov.p38",
+          "level": "cokol",
+          "room": "cokol.r8",
+          "kind": "ufh",
+          "x": 4150,
+          "y": 500,
+          "w": 3350,
+          "h": 2950,
+          "z": 30
+        },
+        {
+          "id": "ov.p39",
+          "level": "cokol",
+          "room": "cokol.r8",
+          "kind": "ufh",
+          "x": 4150,
+          "y": 3550,
+          "w": 3350,
+          "h": 2950,
+          "z": 30
+        },
+        {
+          "id": "ov.p40",
+          "level": "first",
+          "room": "first.r2",
+          "kind": "ufh",
+          "x": 5900,
+          "y": 9270,
+          "w": 1600,
+          "h": 2730,
+          "z": 30
+        },
+        {
+          "id": "ov.p41",
+          "level": "second",
+          "room": "second.r4",
+          "kind": "ufh",
+          "x": 5900,
+          "y": 9270,
+          "w": 1600,
+          "h": 2730,
+          "z": 30
         }
       ]
     },

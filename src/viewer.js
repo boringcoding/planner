@@ -449,16 +449,40 @@
         panel.appendChild(wrap);
       }
 
+      // Пальцев бывает два: на телефоне колеса нет, и зум делается щипком.
+      // Все активные указатели держатся в карте; один — орбита, два — щипок
       const drag = { on: false, x: 0, y: 0, moved: 0 };
+      const touches = new Map();
+      const pinchDist = () => {
+        const [a, b] = [...touches.values()];
+        return Math.hypot(a.x - b.x, a.y - b.y);
+      };
+      let pinch0 = 0;
       canvas.addEventListener('pointerdown', e => {
-        drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0;
-        canvas.setPointerCapture(e.pointerId);
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size === 2) { pinch0 = pinchDist(); drag.on = false; }
+        else { drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0; }
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* синтетический указатель */ }
       });
       canvas.addEventListener('pointerup', e => {
-        drag.on = false; canvas.releasePointerCapture(e.pointerId);
-        if (drag.moved < 5) pick(e);
+        touches.delete(e.pointerId);
+        try { canvas.releasePointerCapture(e.pointerId); } catch { /* синтетический указатель */ }
+        if (drag.on && touches.size === 0 && drag.moved < 5) pick(e);
+        drag.on = false;
       });
+      canvas.addEventListener('pointercancel', e => { touches.delete(e.pointerId); drag.on = false; });
       canvas.addEventListener('pointermove', e => {
+        if (!touches.has(e.pointerId)) return;
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size === 2) {
+          const d = pinchDist();
+          if (pinch0 > 0 && d > 0) {
+            dist = Math.max(span * 0.1, Math.min(span * 5, dist * pinch0 / d));
+            pinch0 = d;
+            draw();
+          }
+          return;
+        }
         if (!drag.on) return;
         drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
         yaw -= (e.clientX - drag.x) * 0.008;

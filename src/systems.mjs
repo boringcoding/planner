@@ -27,6 +27,7 @@ export const KIND = {
   drain: { l: 'канализация', mat: 'ПП 50', top: 'chain', by: 'level' },
   radiator: { l: 'радиатор', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
   convector: { l: 'конвектор в полу', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
+  ufh: { l: 'контур тёплого пола', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
   supply: { l: 'приток', mat: 'воздуховод 125', top: 'chain', by: 'level' },
   exhaust: { l: 'вытяжка', mat: 'воздуховод 125', top: 'chain', by: 'level' },
   data: { l: 'RJ45', mat: 'UTP cat.6', top: 'star' },
@@ -37,6 +38,8 @@ export const KIND = {
 };
 
 export const RESERVE = 1.12;   // запас на спуски, изгибы и подключение
+// шаг укладки контура тёплого пола: метраж трубы — площадь зоны на шаг
+export const UFH_STEP = 150;
 
 // вентиляция всегда под потолком: система ОВ разводит отопление по полу,
 // но воздуховод на полу — это трасса, которой не может существовать
@@ -197,6 +200,10 @@ export function bill(house, sys) {
   const addM = (m, v) => mat.set(m, (mat.get(m) || 0) + v);
   for (const t of trunks) addM(t.mat, t.len);
   for (const r of runs) addM((KIND[r.points[0].kind] || {}).mat || '—', r.len);
+  // сам контур — труба по зоне укладки: площадь на шаг, без запаса —
+  // запас уже сидит в шаге; подводка посчитана прогоном выше
+  for (const p of sys.points)
+    if (p.kind === 'ufh') addM('PEX 16, контур тёплого пола', Math.round(p.w * p.h / UFH_STEP));
   for (const p of sys.points) dev.set(p.kind, (dev.get(p.kind) || 0) + 1);
 
   return {

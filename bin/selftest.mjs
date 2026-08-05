@@ -432,6 +432,17 @@ const SCASES = [
            const p = sys(d, 'eom').points.find(x => x.room === 'first.r5' && x.z === 300);
            p.side = r.side; p.along = r.along; }],
 
+  ['санузел без тёплого пола', /без контура тёплого пола/,
+    d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'ufh' && p.room === 'second.r4')); }],
+
+  ['пол по грунту остыл', /пол по грунту без контура/,
+    d => { const s = sys(d, 'ov'); s.points = s.points.filter(p => !(p.kind === 'ufh' && p.room === 'cokol.r8')); }],
+
+  ['контур длиннее нормы', /длиннее 120/,
+    d => { const s = sys(d, 'ov');
+           s.points = s.points.filter(p => p.id !== 'ov.p39');
+           const p = s.points.find(x => x.id === 'ov.p38'); p.h = 6000; }],
+
   ['на развёртке подписи некуда встать', /некуда встать|наезжают/,
     d => { const s = sys(d, 'eom'); const p = s.points.find(x => x.room === 'cokol.r7' && x.side);
            for (let i = 0; i < 24; i++)

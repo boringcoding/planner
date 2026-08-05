@@ -984,6 +984,7 @@ export function ifc(house, systems = [], opt = {}) {
     cold: ['IFCVALVE', '.ISOLATING.', 'Подводка ХВС'],
     hot: ['IFCVALVE', '.ISOLATING.', 'Подводка ГВС'],
     drain: ['IFCWASTETERMINAL', '.FLOORTRAP.', 'Выпуск канализации'],
+    ufh: ['IFCSPACEHEATER', '.NOTDEFINED.', 'Контур тёплого пола'],
     radiator: ['IFCSPACEHEATER', '.RADIATOR.', 'Радиатор'],
     convector: ['IFCSPACEHEATER', '.CONVECTOR.', 'Конвектор внутрипольный'],
     supply: ['IFCAIRTERMINAL', '.DIFFUSER.', 'Приток'],
@@ -1009,6 +1010,17 @@ export function ifc(house, systems = [], opt = {}) {
         x = f.x; y = f.y;
       } else continue;
       const [type, pd, name] = MEP[p.kind] || ['IFCBUILDINGELEMENTPROXY', '.NOTDEFINED.', p.kind];
+      // контур тёплого пола — плита зоны укладки в стяжке, а не коробочка
+      if (p.kind === 'ufh') {
+        const pl2 = place(s.pl, p.x + p.w / 2, Y(p.y + p.h / 2), p.z);
+        const el2 = E('IFCSPACEHEATER', [G(`mep:${p.id}`), owner, str('Контур тёплого пола'), '$', '$',
+          pl2, bodyOf([paint(boxSolid(p.w, p.h, 30), sys.id)]), str(p.id), '.NOTDEFINED.']);
+        put(s.st, el2);
+        own.push(el2);
+        addProps(el2, `mep:${p.id}`, [['id', p.id], ['kind', p.kind], ['room', p.room],
+        ['len', Math.round(p.w * p.h / 150)]]);
+        continue;
+      }
       let size = p.kind === 'radiator' ? [p.len || 800, 120, 500]
         : p.kind === 'convector' ? [p.len || 800, 250, 120]
         : p.kind === 'supply' || p.kind === 'exhaust' ? [200, 200, 200] : [120, 120, 120];
@@ -1041,6 +1053,7 @@ export function ifc(house, systems = [], opt = {}) {
       cold: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       hot: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       drain: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 60],
+      ufh: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       radiator: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       convector: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       supply: ['IFCDUCTSEGMENT', '.RIGIDSEGMENT.', 125],
