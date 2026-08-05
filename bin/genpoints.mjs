@@ -17,11 +17,11 @@ const PROG = {
   'cokol.r2': { sock: [[4, 1100]], power: 1, light: 1, sw: 1 },      // котельная
   'cokol.r9': { light: 1, sw: 1 },                                    // дровяник
   'cokol.r7': { power: 1, light: 1 },                                 // сауна
-  'cokol.r3': { sock: [[2, 300]], light: 1, sw: 1 },                  // кладовая
-  'cokol.r8': { sock: [[4, 300]], light: 2, sw: 2 },                  // зона отдыха
+  'cokol.r3': { sock: [[2, 300]], light: 1, sw: 2 },                  // кладовая
+  'cokol.r8': { sock: [[6, 300]], light: 3, sw: 3 },                  // зона отдыха
   'cokol.r5': { light: 1, sw: 2 },
   'cokol.r6': { sock: [[1, 300]], light: 1, sw: 2 },
-  'cokol.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 2, sw: 1 },   // мастерская
+  'cokol.r1': { sock: [[3, 1100], [2, 300]], power: 1, light: 2, sw: 1 },   // мастерская
   'cokol.r4': { sock: [[2, 1100]], light: 1, sw: 1 },                 // душевая
   'first.r1': { sock: [[4, 1100], [2, 300]], power: 1, light: 3, sw: 2 },
   'first.r3': { light: 1, sw: 2 },
