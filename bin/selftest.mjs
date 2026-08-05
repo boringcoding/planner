@@ -318,6 +318,15 @@ const CASES = [
 
   ['окно почти по центру помещения', /почти по центру/,
     h => { const w = lvl(h, 'second').windows.find(x => x.id === 'second.g8'); w.a -= 100; w.b -= 100; }],
+
+  ['открытый проём сузили до щели', /проём .* шириной \d+, нужно 800/,
+    h => { lvl(h, 'first').openings.find(o => o.kind === 'pass').w = 450; }],
+
+  ['метку garage сняли', /помещения с меткой garage нет/,
+    h => { room(h, 'first', 'Гараж').tag = 'workshop'; }],
+
+  ['проём упёрся в примыкающую стену', /простенку нужно/,
+    h => { const w = lvl(h, 'first').windows.find(x => x.id === 'first.g4'); w.a = 6900; w.b = 7800; }],
 ];
 
 // правила разделов: ломается data/systems.json, дом остаётся прежним

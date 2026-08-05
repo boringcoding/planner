@@ -144,6 +144,16 @@ export function blindGeom(house) {
   const S = house.shell, out = A.out ?? 1000, th = A.th ?? 100;
   const ground = house.site.ground ?? -300;
   const bits = outsideBits(house);
+  // настил веранды стоит на сваях над отмосткой — полоса под ним не нужна,
+  // а ступени с настила её пересекали бы; под воротами отмостку сменяет пандус
+  for (const L of house.levels) {
+    if (L.veranda) {
+      const v = L.veranda;
+      bits.push({ side: v.x >= S.w ? 'E' : 'W', band: [v.y, v.y + v.h] });
+    }
+    for (const w of (L.windows || []).filter(x => x.kind === 'gate'))
+      bits.push({ side: w.side, band: [w.a - 150, w.b + 150] });
+  }
   const strips = [];
   const bands = side => bits.filter(b => b.side === side)
     .map(b => [b.band[0] - 50, b.band[1] + 50]).sort((a, b) => a[0] - b[0]);
@@ -168,6 +178,33 @@ export function blindGeom(house) {
   for (const [s0, s1] of cut(0, S.h, 'E'))
     strips.push({ id: `site.apron${++n}`, x: S.w, y: s0, w: out, h: s1 - s0 });
   return strips.map(s => ({ ...s, top: ground, th }));
+}
+
+// ─────────────────────────────────────────────────────────────── пандусы
+// Порог ворот выше земли — это съезд, а не «ворота в стене»: без пандуса
+// машина выезжает в обрыв 300 мм, и на фасаде это видно сразу
+export function rampGeom(house) {
+  const out = [];
+  const S = house.shell, ground = house.site.ground ?? -300;
+  for (const L of house.levels)
+    for (const w of (L.windows || []).filter(x => x.kind === 'gate')) {
+      const topZ = L.base + (w.sill || 0) - 30;             // чуть ниже порога
+      const drop = topZ - ground;
+      if (drop <= 0) continue;
+      const run = 1500;
+      const a = w.a - 150, b = w.b + 150;
+      const pad = w.side === 'S' ? { x: a, y: -run, w: b - a, h: run }
+        : w.side === 'N' ? { x: a, y: S.h, w: b - a, h: run }
+          : w.side === 'W' ? { x: -run, y: a, w: run, h: b - a }
+            : { x: S.w, y: a, w: run, h: b - a };
+      out.push({
+        id: w.id.replace(/\.g/, '.ramp'), win: w.id, side: w.side, pad,
+        z0: ground, z1: topZ, run,
+        slope: Math.atan2(drop, run) * 180 / Math.PI,
+        len: Math.round(Math.hypot(run, drop))
+      });
+    }
+  return out;
 }
 
 // Труба должна подняться над кровлей — СП 7.13130: ближе 1,5 м от конька
@@ -239,13 +276,15 @@ export function verandaGeom(house) {
     { x: v.x, y: v.y + v.h - 50, w: v.w - 50, h: 50 },            // дальний от улицы
     { x: v.x + stepW, y: v.y, w: v.w - stepW - 50, h: 50 }        // уличный, минус ступени
   ] : [];
+  // подъёмов steps, деревянных проступей на одну меньше: нижний шаг делается
+  // с земли, и класть доску верхом вровень с грунтом значит закопать её
   const deckSteps = [];
   if (v.steps) {
     const rise = Math.round((v.deck - ground) / v.steps);
-    for (let i = 0; i < v.steps; i++)
+    for (let i = 1; i < v.steps; i++)
       deckSteps.push({
-        x: v.x, y: v.y - 300 * (i + 1), w: stepW, h: 300,
-        top: v.deck - rise * (i + 1), rise
+        x: v.x, y: v.y - 300 * i, w: stepW, h: 300,
+        top: v.deck - rise * i, rise
       });
   }
   return {
@@ -260,8 +299,9 @@ export function verandaGeom(house) {
     deckBottom, beamBottom: deckBottom - v.beam[0],         // низ обвязки — по ней сваи
     pileTop: deckBottom - v.beam[0],
     pileBottom: (house.site.ground ?? -300) - v.pileDepth,
-    // высота стойки считается по низу навеса над самой стойкой, а не над краем
-    postZ: Math.round(v.attach - (v.w - v.post / 2) * tan) - v.deck,
+    // высота стойки — до низа полотна навеса над самой стойкой: полотно
+    // толщиной 60 висит под плоскостью, и стойка в плоскость не протыкается
+    postZ: Math.round(v.attach - (v.w - v.post / 2) * tan) - 60 - v.deck,
     // Низ навеса над настилом у наружного края. По нему раньше проверялся
     // проход — и зря: под навесом висит прогон, и головой встречают именно его.
     clear: dropZ - v.deck,

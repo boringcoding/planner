@@ -67,7 +67,8 @@ export const LIMITS = {
   stairHead: 2000,         // от ступени до низа перекрытия над маршем
   stairStep: [600, 650],   // формула удобства 2r + t
   carBay: [2500, 5300],    // машиноместо на створку ворот: ширина и глубина
-  apronMin: 800            // ширина отмостки
+  apronMin: 800,           // ширина отмостки
+  jambMin: 100             // простенок от наружного проёма до примыкающей стены
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -352,10 +353,13 @@ export function check(house, brief) {
       const car = cars.find(c => Math.abs(c.x + c.w / 2 - gc) < 150);
       if (!car) E(L, `нет машины по центру ворот ${g.a}–${g.b} (центр ${gc})`);
       else if (car.w + 300 > g.b - g.a) E(L, `створка ${g.b - g.a} мм узка для машины ${car.w} мм`);
-      // 12а. машиноместо по СП 113: ширина створки и глубина по ходу заезда
+      // 12а. машиноместо по СП 113: ширина створки
       if (g.b - g.a < LIMITS.carBay[0]) E(L, `створка ${g.b - g.a} мм уже машиноместа ${LIMITS.carBay[0]}`);
+    }
+    // глубина по ходу заезда — один раз на этаж, а не на каждую створку
+    if (gates.length) {
       const bay = rooms.find(r => r.tag === 'garage');
-      const depth = bay && (g.side === 'S' || g.side === 'N' ? bay.h : bay.w);
+      const depth = bay && (gates[0].side === 'S' || gates[0].side === 'N' ? bay.h : bay.w);
       if (bay && depth < LIMITS.carBay[1])
         E(L, `гараж ${depth} мм в глубину, машиноместу нужно ${LIMITS.carBay[1]}`);
     }
@@ -567,14 +571,15 @@ export function check(house, brief) {
       const hz = o.hz || 0;
       if (hz < LIMITS.doorHzMin) E(L, `проём ${o.x},${o.y} высотой ${hz} ниже ${LIMITS.doorHzMin}`);
       if (hz > L.clear) E(L, `проём ${o.x},${o.y} высотой ${hz} не влезает под потолок ${L.clear}`);
-      // 26а. ширина двери: в санузел уже, межкомнатная не меньше нормы.
-      // Ширина нигде не проверялась — только высоты
-      if (o.kind !== 'pass') {
+      // 26а. ширина: в санузел уже, межкомнатная не меньше нормы, открытый
+      // проём — тоже проход и меньше двери быть не может. Ширина нигде
+      // не проверялась — только высоты
+      {
         const r = openingRect(o);
         const grown = o.dir === 'h' ? rect(r.x, r.y - 150, r.w, r.h + 300) : rect(r.x - 150, r.y, r.w + 300, r.h);
         const wet = rooms.some(rm => rm.tag === 'wet' && overlap(grown, rm) > 1000);
-        const lim = wet ? LIMITS.wetDoorW : LIMITS.doorW;
-        if (o.w < lim) E(L, `дверь ${o.x},${o.y} шириной ${o.w}, нужно ${lim}`);
+        const lim = wet && o.kind !== 'pass' ? LIMITS.wetDoorW : LIMITS.doorW;
+        if (o.w < lim) E(L, `${o.kind === 'pass' ? 'проём' : 'дверь'} ${o.x},${o.y} шириной ${o.w}, нужно ${lim}`);
       }
     }
     for (const w of wins) {
@@ -652,6 +657,22 @@ export function check(house, brief) {
       // в этаж; такому окну нужно ограждение, и метка pano его не отменяет
       if (L.base > 0 && sill < LIMITS.lowSill && (!w.guard || w.guard < LIMITS.guardRail))
         E(L, `окно ${w.id}: подоконник ${sill} на отметке ${L.base}, ограждение ${w.guard || 'не задано'} — нужно ${LIMITS.guardRail}`);
+    }
+
+    // 26г. простенок между наружным проёмом и внутренней стеной, примыкающей
+    // к тому же фасаду: перерезанный стеной проём или нулевая кладка между
+    // ними — нереализуемый узел, которого на плане не видно
+    for (const w of wins) {
+      for (const q of walls) {
+        const abut = w.side === 'S' ? q.y <= S.wall + 1
+          : w.side === 'N' ? q.y + q.h >= S.h - S.wall - 1
+            : w.side === 'W' ? q.x <= S.wall + 1 : q.x + q.w >= S.w - S.wall - 1;
+        if (!abut) continue;
+        const band = w.side === 'S' || w.side === 'N' ? [q.x, q.x + q.w] : [q.y, q.y + q.h];
+        const gap = Math.max(band[0] - w.b, w.a - band[1]);
+        if (gap < LIMITS.jambMin && gap > -Math.min(band[1] - band[0], w.b - w.a))
+          E(L, `проём ${w.id} в ${Math.max(0, Math.round(gap))} мм от стены ${q.id} — простенку нужно ${LIMITS.jambMin}`);
+      }
     }
 
     // 27в. входная дверь ведёт в тамбур, а не сразу в дом
@@ -957,8 +978,8 @@ export function check(house, brief) {
           const a = items[i], b = items[j];
           if (a.L === b.L) continue;
           const d = Math.abs(a.c - b.c);
-          if (d > 0 && d < LIMITS.facadeAxisSnap)
-            errs.push(`фасад ${side}: оси ${a.w.id} (${a.c}) и ${b.w.id} (${b.c}) разъехались на ${d} — совместить или развести на ${LIMITS.facadeAxisSnap}`);
+          if (d >= 1 && d < LIMITS.facadeAxisSnap)
+            errs.push(`фасад ${side}: оси ${a.w.id} (${a.c}) и ${b.w.id} (${b.c}) разъехались на ${Math.round(d)} — совместить или развести на ${LIMITS.facadeAxisSnap}`);
         }
       // 35б. парные ворота: равные поля от углов фасада
       const gates = items.filter(x => x.w.kind === 'gate');
@@ -974,11 +995,16 @@ export function check(house, brief) {
         if (it.w.kind) continue;
         const host = it.L.rooms.find(r => overlap(windowBand(it.w, S, 300), r) > 1000);
         if (!host) continue;
+        // два окна одной комнаты на одной грани — симметричная пара,
+        // у неё своя композиция, и «почти центр» к ней не относится
+        const twin = items.some(o => o !== it && !o.w.kind && o.L === it.L
+          && it.L.rooms.find(r => overlap(windowBand(o.w, S, 300), r) > 1000) === host);
+        if (twin) continue;
         const c0 = side === 'S' || side === 'N' ? host.x + host.w / 2 : host.y + host.h / 2;
         const d = Math.abs(it.c - c0);
         // держит ось другого этажа — центр помещения уступает оси фасада
         const holdsAxis = items.some(o => o.L !== it.L && o.c === it.c);
-        if (d > 0 && d < LIMITS.roomAxisSnap && !holdsAxis)
+        if (d >= 1 && d < LIMITS.roomAxisSnap && !holdsAxis)
           errs.push(`фасад ${side}: окно ${it.w.id} почти по центру «${host.name}» (${it.c} против ${c0}) — в центр или дальше ${LIMITS.roomAxisSnap}`);
       }
     }
@@ -1038,6 +1064,10 @@ export function check(house, brief) {
     if (c.cars) {
       const n = allFurn.filter(f => f.sym === 'car').length;
       if (n < c.cars) errs.push(`машин в гараже ${n}, задание требует ${c.cars}`);
+      // вся гаражная защита — тамбур, огнестойкость, машиноместо — висит
+      // на метке garage: убери её, и правила молча погаснут
+      if (!allRooms.some(r => r.tag === 'garage'))
+        errs.push('задание требует гараж, а помещения с меткой garage нет');
     }
     if (c.wardrobe && !allRooms.some(r => r.tag === 'wardrobe'))
       errs.push('задание требует гардеробную, в доме её нет');

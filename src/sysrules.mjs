@@ -3,7 +3,7 @@
 // дверном полотне и вытяжка, которой нет, — всё это на картинке незаметно.
 
 import { face, faceItems, SIDES } from './model.mjs';
-import { KIND, RESERVE, place, reach, bill, runSegments3d, segsLen } from './systems.mjs';
+import { KIND, RESERVE, place, reach, bill, runSegments3d, trunkSegments3d, segsLen } from './systems.mjs';
 import { roomBlock } from './render.mjs';
 import { elevBoxes, elevationRooms } from './elev.mjs';
 
@@ -189,6 +189,13 @@ export function checkSystems(house, data) {
       const got = Math.round(segsLen(segs) * k * RESERVE);
       if (Math.abs(got - r.len) > 1)
         E(`трасса ${r.key}: осевые отрезки дают ${got} мм, ведомость ${r.len}`);
+    }
+    // 10б. и магистрали тоже: стояк наращивается от соседнего уровня,
+    // и его тело обязано совпасть со строчкой ведомости
+    for (const t of b.trunks) {
+      const got = Math.round(segsLen(trunkSegments3d(house, sys, t)) * RESERVE);
+      if (Math.abs(got - t.len) > 1)
+        E(`магистраль до «${t.level.title}»: тело даёт ${got} мм, ведомость ${t.len}`);
     }
   }
 

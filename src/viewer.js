@@ -189,16 +189,12 @@
       };
       let tri = 0;
       const seen = new Set();
-      // помещения запоминают свой габарит: изоляция помещения — это клип-бокс
-      const spaceBox = new Map();
       api.StreamAllMeshes(model, mesh => {
         const eid = mesh.expressID;
         const group = sysOf.get(eid) || typeKey.get(eid) || 'other';
         const st = storeyOf.get(eid);
         const b = bucket(`${group}|${st || 0}`);
         seen.add(eid);
-        const sb = group === 'spaces'
-          ? { mn: [1e9, 1e9, 1e9], mx: [-1e9, -1e9, -1e9] } : null;
         for (let i = 0; i < mesh.geometries.size(); i++) {
           const pg = mesh.geometries.get(i);
           const g = api.GetGeometry(model, pg.geometryExpressID);
@@ -207,14 +203,9 @@
           const m = pg.flatTransformation, base = b.pos.length / 3;
           for (let k = 0; k < v.length; k += 6) {
             const x = v[k], y = v[k + 1], z = v[k + 2];
-            const wx = m[0] * x + m[4] * y + m[8] * z + m[12];
-            const wy = m[1] * x + m[5] * y + m[9] * z + m[13];
-            const wz = m[2] * x + m[6] * y + m[10] * z + m[14];
-            b.pos.push(wx, wy, wz);
-            if (sb) for (const [a, w] of [[0, wx], [1, wy], [2, wz]]) {
-              if (w < sb.mn[a]) sb.mn[a] = w;
-              if (w > sb.mx[a]) sb.mx[a] = w;
-            }
+            b.pos.push(m[0] * x + m[4] * y + m[8] * z + m[12],
+              m[1] * x + m[5] * y + m[9] * z + m[13],
+              m[2] * x + m[6] * y + m[10] * z + m[14]);
             const nx = v[k + 3], ny = v[k + 4], nz = v[k + 5];
             b.nrm.push(m[0] * nx + m[4] * ny + m[8] * nz,
               m[1] * nx + m[5] * ny + m[9] * nz,
@@ -224,8 +215,46 @@
           for (let k = 0; k < ix.length; k++) b.idx.push(base + ix[k]);
           tri += ix.length / 3;
         }
-        if (sb) spaceBox.set(eid, sb);
       });
+
+      // Габариты помещений — для изоляции клип-боксом. Движок меши IfcSpace
+      // не отдаёт вовсе, поэтому габарит читается из самого файла: профиль
+      // призмы и цепочка посадок. Посадки помещений в этой выгрузке без
+      // поворотов, и разворот цепочки — простое сложение
+      const spaceBox = new Map();
+      const originOf = pl => {
+        let x = 0, y = 0, z = 0, cur = pl;
+        for (let d = 0; cur && d < 8; d++) {
+          const rel = cur.RelativePlacement && api.GetLine(model, cur.RelativePlacement.value);
+          const pt = rel && rel.Location && api.GetLine(model, rel.Location.value);
+          if (pt && pt.Coordinates) {
+            x += pt.Coordinates[0].value; y += pt.Coordinates[1].value;
+            z += (pt.Coordinates[2] && pt.Coordinates[2].value) || 0;
+          }
+          cur = cur.PlacementRelTo && cur.PlacementRelTo.value
+            ? api.GetLine(model, cur.PlacementRelTo.value) : null;
+        }
+        return [x, y, z];
+      };
+      for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCSPACE))) {
+        try {
+          const sp = api.GetLine(model, e);
+          // мешей у помещения нет, и в общую карту имён оно не попало
+          seen.add(e);
+          const [ox, oy, oz] = originOf(api.GetLine(model, sp.ObjectPlacement.value));
+          const shape = api.GetLine(model, sp.Representation.value);
+          const rep0 = api.GetLine(model, shape.Representations[0].value);
+          const solid = api.GetLine(model, rep0.Items[0].value);
+          const prof = api.GetLine(model, solid.SweptArea.value);
+          const w = prof.XDim.value, h = prof.YDim.value, dz = solid.Depth.value;
+          // мм и Z-вверх файла -> метры и Y-вверх движка (план Y уходит в -Z)
+          const mm = 1 / 1000;
+          spaceBox.set(e, {
+            mn: [(ox - w / 2) * mm, oz * mm, -(oy + h / 2) * mm],
+            mx: [(ox + w / 2) * mm, (oz + dz) * mm, -(oy - h / 2) * mm]
+          });
+        } catch { /* помещение без призмы — не изолируем */ }
+      }
 
       // имена и метки — пока модель открыта: после CloseModel строк не достать
       const info = new Map();
@@ -311,10 +340,12 @@
               if (set.size === 1 && set.has(it[0]) && wrap._snap) {
                 set.clear(); for (const k of wrap._snap) set.add(k); wrap._snap = null;
               } else {
-                wrap._snap = [...set];
+                // снапшот делается один раз при входе в solo: переключение
+                // между solo-слоями не должно затирать исходный набор
+                if (!wrap._snap) wrap._snap = [...set];
                 set.clear(); set.add(it[0]);
               }
-            } else set.has(it[0]) ? set.delete(it[0]) : set.add(it[0]);
+            } else { set.has(it[0]) ? set.delete(it[0]) : set.add(it[0]); wrap._snap = null; }
             for (let i = 0; i < items.length; i++)
               btns[i].classList.toggle('on', set.has(items[i][0]));
             draw();
@@ -376,7 +407,7 @@
         range.className = 'v-range';
         range.oninput = () => {
           const t = +range.value / 1000;
-          clip.top = box.mn[1] + pad + (clip.topFull - box.mn[1] - pad) * t;
+          clip.top = clip.mn[1] + (clip.topFull - clip.mn[1]) * t;
           draw();
         };
         wrap.appendChild(range);
@@ -444,9 +475,9 @@
 
       function scene(pickPass) {
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const w = canvas.clientWidth, h = canvas.clientHeight;
-        if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-          canvas.width = w * dpr; canvas.height = h * dpr;
+        const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w; canvas.height = h;
         }
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(0.894, 0.890, 0.863, 1);
@@ -474,9 +505,9 @@
         // иначе порядок вёдер решает, что видно
         for (const solid of [true, false])
           for (const p of visible) {
-            const a = pickPass ? 1 : alphaOf(p);
+            const a = alphaOf(p);
+            if (pickPass && a < 1) continue;   // сквозь оболочку кликается начинка
             if (solid !== (a >= 1)) continue;
-            if (pickPass && p.group === 'spaces') continue;   // воздух не выбирают
             gl.depthMask(a >= 1);
             const c = COLOR[p.group] || [0.6, 0.6, 0.6];
             gl.uniform3f(uCol, c[0], c[1], c[2]);
@@ -496,9 +527,16 @@
         const r = canvas.getBoundingClientRect();
         const px = Math.round((e.clientX - r.left) * dpr);
         const py = Math.round(canvas.height - (e.clientY - r.top) * dpr);
-        const b = new Uint8Array(4);
-        gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, b);
-        const id = b[0] + b[1] * 256 + b[2] * 65536;
+        // сглаживание смешивает ид-цвета на рёбрах: читается окно 3×3,
+        // выбирается номер, который встретился чаще и существует в файле
+        const b = new Uint8Array(4 * 9);
+        gl.readPixels(Math.max(0, px - 1), Math.max(0, py - 1), 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, b);
+        const votes = new Map();
+        for (let i = 0; i < 9; i++) {
+          const v = b[i * 4] + b[i * 4 + 1] * 256 + b[i * 4 + 2] * 65536;
+          if (v > 0 && info.has(v)) votes.set(v, (votes.get(v) || 0) + 1);
+        }
+        const id = [...votes.entries()].sort((a, c) => c[1] - a[1])[0]?.[0] || 0;
         if (id > 0 && info.has(id)) {
           sel = id;
           const i = info.get(id);

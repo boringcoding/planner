@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom } from '../src/roof.mjs';
 import { bill, runSegments3d } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
@@ -62,8 +62,9 @@ const vents = roofOn * 2;
 // полосы отмостки. Считается по модели, а не по глазу
 const porches = porchGeom(house);
 const apron = blindGeom(house);
+const ramps = rampGeom(house);
 const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2
-  + 2 * pits.length + porches.length + apron.length;
+  + 2 * pits.length + porches.length + apron.length + ramps.length;
 const flues = house.levels[house.levels.length - 1].flues || [];
 
 // трассы: сегментный элемент на каждый прогон с геометрией и на каждую

@@ -38,7 +38,10 @@ export const KIND = {
 
 export const RESERVE = 1.12;   // запас на спуски, изгибы и подключение
 
-const runZ = (sys, L) => sys.run === 'ceiling' ? L.clear - 150 : 100;
+// вентиляция всегда под потолком: система ОВ разводит отопление по полу,
+// но воздуховод на полу — это трасса, которой не может существовать
+const AIR = new Set(['supply', 'exhaust']);
+const runZ = (sys, L, kind) => (sys.run === 'ceiling' || AIR.has(kind)) ? L.clear - 150 : 100;
 
 // координаты точки в плане: либо посажена на грань, либо задана прямо
 export function place(house, p) {
@@ -66,20 +69,30 @@ export function groupKey(p) {
   return `${p.kind}:${k.by === 'room' ? p.room : p.level}`;
 }
 
-// магистраль от источника до этажного узла
+// Магистраль — не звезда от источника к каждому этажу: горизонталь от
+// источника до стояка идёт один раз и оплачивается ближайшим уровнем,
+// дальше стояк наращивается от соседнего уровня. Звезда считала общий
+// участок дважды — и в смете, и в теле выгрузки
 export function trunk(house, sys, levelId) {
   const src = sys.source, srcL = house.levels.find(l => l.id === src.level);
   if (levelId === src.level) return null;
   const L = house.levels.find(l => l.id === levelId);
-  const up = seg(srcL, { x: src.x, y: src.y }, sys.vertical);
-  // стояк меряется между плоскостями прокладки, а не между отметками пола:
-  // потолочная разводка двух уровней разной высоты даёт другой подъём
+  const dir = Math.sign(L.base - srcL.base);
+  const prev = house.levels
+    .filter(l => l === srcL || (Math.sign(l.base - srcL.base) === dir
+      && Math.abs(l.base - srcL.base) < Math.abs(L.base - srcL.base)))
+    .sort((a, b) => Math.abs(b.base - srcL.base) - Math.abs(a.base - srcL.base))[0];
+  const first = prev === srcL;
+  const up = first ? seg(srcL, { x: src.x, y: src.y }, sys.vertical) : null;
   const rz = runZ(sys, srcL);
-  const rise = Math.abs((L.base + runZ(sys, L)) - (srcL.base + rz));
-  const len = up.len + rise + Math.abs(src.z - rz);
+  // стояк меряется между плоскостями прокладки, а не между отметками пола
+  const prevPlane = prev.base + (prev === srcL ? rz : runZ(sys, prev));
+  const rise = Math.abs((L.base + runZ(sys, L)) - prevPlane);
+  const len = (first ? up.len + Math.abs(src.z - rz) : 0) + rise;
   return {
-    level: L, via: up.via, len: Math.round(len * RESERVE), mat: sys.trunk || 'магистраль',
-    srcLevel: srcL, srcZ: src.z, rz
+    level: L, via: up ? up.via : [], len: Math.round(len * RESERVE),
+    mat: sys.trunk || 'магистраль',
+    srcLevel: srcL, prevLevel: prev, srcZ: src.z, rz, first, prevPlane
   };
 }
 
@@ -87,7 +100,7 @@ export function trunk(house, sys, levelId) {
 export function groupRun(house, sys, points) {
   const L = house.levels.find(l => l.id === points[0].level);
   const n = node(house, sys, L.id);
-  const rz = runZ(sys, L);
+  const rz = runZ(sys, L, points[0].kind);
   const rest = points.map(p => ({ p, at: place(house, p) })).filter(x => x.at);
   if (!rest.length) return { level: L, points, via: [], len: 0 };   // сажать некуда — это ловит правило
   const order = [];
@@ -138,19 +151,24 @@ export function runSegments3d(run) {
   return segs;
 }
 
-// магистраль: разводка на уровне источника плюс подъём стояка до этажа
+// магистраль в координатах своего уровня: горизонталь источника — только
+// у первой от источника, стояк — от плоскости соседнего уровня
 export function trunkSegments3d(house, sys, t) {
-  const segs = [];
-  if (t.srcZ !== t.rz)
-    segs.push({ v: true, x: sys.source.x, y: sys.source.y, z0: Math.min(t.srcZ, t.rz), z1: Math.max(t.srcZ, t.rz), level: t.srcLevel });
-  for (let k = 1; k < t.via.length; k++)
-    if (t.via[k].x !== t.via[k - 1].x || t.via[k].y !== t.via[k - 1].y)
-      segs.push({ a: t.via[k - 1], b: t.via[k], z: t.rz, level: t.srcLevel });
-  // стояк: вертикаль от плоскости прокладки источника до плоскости этажа
-  const z0 = t.srcLevel.base + t.rz, z1 = t.level.base + runZ(sys, t.level);
+  const segs = [], base = t.level.base;
+  if (t.first) {
+    const zRun = t.srcLevel.base + t.rz - base;
+    if (t.srcZ !== t.rz) {
+      const a = t.srcLevel.base + t.srcZ - base;
+      segs.push({ v: true, x: sys.source.x, y: sys.source.y, z0: Math.min(a, zRun), z1: Math.max(a, zRun) });
+    }
+    for (let k = 1; k < t.via.length; k++)
+      if (t.via[k].x !== t.via[k - 1].x || t.via[k].y !== t.via[k - 1].y)
+        segs.push({ a: t.via[k - 1], b: t.via[k], z: zRun });
+  }
+  const z0 = t.prevPlane - base, z1 = runZ(sys, t.level);
   segs.push({
     v: true, x: sys.vertical.x, y: sys.vertical.y,
-    z0: Math.min(z0, z1) - t.srcLevel.base, z1: Math.max(z0, z1) - t.srcLevel.base, level: t.srcLevel
+    z0: Math.min(z0, z1), z1: Math.max(z0, z1)
   });
   return segs;
 }

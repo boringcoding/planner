@@ -63,7 +63,7 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom } from './roof.mjs';
 import { bill, runSegments3d, trunkSegments3d, KIND } from './systems.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
@@ -554,7 +554,7 @@ export function ifc(house, systems = [], opt = {}) {
           st.x + st.w / 2 - cx, Y(st.y + st.h / 2) - cy, bottom));
         const el = E('IFCSTAIRFLIGHT', [G(`vsteps:${lv.id}`), owner, str('Ступени веранды'), '$', '$',
           place(s.pl, cx, cy, 0), bodyOf(solids.map(x => paint(x, 'wood'))), str(`${lv.id}.vsteps`),
-          String(V.deckSteps.length), String(V.deckSteps.length),
+          String(V.deckSteps.length), String(v.steps),
           num(V.deckSteps[0].rise), num(300), '.STRAIGHT.']);
         put(s.st, el);
         matOf('Древесина', el);
@@ -617,22 +617,23 @@ export function ifc(house, systems = [], opt = {}) {
       put(top.st, el);
       matOf('Древесина', el);
     }
-    // надкровельная часть труб: без неё дымоход обрывается в чердаке
+    // Надкровельная часть труб идёт от чердачного перекрытия, а не от
+    // плоскости ската: поуровневые шахты кончаются на перекрытии, и кусок,
+    // начатый от ската, висел в чердаке на полуметре воздуха
+    const overZ0 = R.base - top.lv.base;
     for (const f of top.lv.flues || []) {
-      const z0 = Math.round(g.zAt(f.x + f.w / 2, f.y + f.h / 2)) - top.lv.base;
       const el = E('IFCCHIMNEY', [G(`chimney:${f.id}`), owner, str('Дымоход над кровлей'), '$', '$',
-        place(top.pl, f.x + f.w / 2, Y(f.y + f.h / 2), z0),
-        bodyOf([paint(boxSolid(f.w, f.h, flueTop(house, f) - top.lv.base - z0), 'metal')]),
+        place(top.pl, f.x + f.w / 2, Y(f.y + f.h / 2), overZ0),
+        bodyOf([paint(boxSolid(f.w, f.h, flueTop(house, f) - top.lv.base - overZ0), 'metal')]),
         str(`${f.id}.over`), '.NOTDEFINED.']);
       put(top.st, el);
       matOf('Сталь', el);
       addProps(el, `chimney:${f.id}`, [['id', `${f.id}.over`], ['top', flueTop(house, f)]]);
     }
     for (const d of top.lv.ducts || []) {
-      const z0 = Math.round(g.zAt(d.x + d.w / 2, d.y + d.h / 2)) - top.lv.base;
       const el = E('IFCBUILDINGELEMENTPROXY', [G(`ductover:${d.id}`), owner, str('Вентшахта над кровлей'), '$', '$',
-        place(top.pl, d.x + d.w / 2, Y(d.y + d.h / 2), z0),
-        bodyOf([paint(boxSolid(d.w, d.h, flueTop(house, d) - top.lv.base - z0), 'wall')]),
+        place(top.pl, d.x + d.w / 2, Y(d.y + d.h / 2), overZ0),
+        bodyOf([paint(boxSolid(d.w, d.h, flueTop(house, d) - top.lv.base - overZ0), 'wall')]),
         str(`${d.id}.over`), '.ELEMENT.']);
       put(top.st, el);
     }
@@ -666,8 +667,8 @@ export function ifc(house, systems = [], opt = {}) {
     const friezeEnds = g.alongY
       ? [['W', [0, Y(S.wall), zb], [0, -1, 0], [1, 0, 0], true],
       ['E', [S.w - S.wall, Y(S.wall), zb], [0, -1, 0], [1, 0, 0], false]]
-      : [['S', [S.wall, Y(0), zb], [1, 0, 0], [0, 1, 0], true],
-      ['N', [S.wall, Y(S.h - S.wall), zb], [1, 0, 0], [0, 1, 0], false]];
+      : [['S', [S.wall, Y(S.wall), zb], [1, 0, 0], [0, 1, 0], false],
+      ['N', [S.wall, Y(S.h), zb], [1, 0, 0], [0, 1, 0], true]];
     for (const [side, pos, axis, ref, outerFirst] of friezeEnds) {
       // профиль клином: снаружи до низа тела ската, изнутри выше — грань
       // наружу ставится первой точкой профиля
@@ -728,6 +729,27 @@ export function ifc(house, systems = [], opt = {}) {
       put(top.st, el);
       matOf('Сталь', el);
     }
+  }
+
+  // ---- пандусы ворот ------------------------------------------------------
+  // Порог ворот выше земли: без съезда машина выезжает в обрыв. Наклонная
+  // плита от земли до порога, отмостка под ней разорвана
+  for (const q of rampGeom(house)) {
+    const s = storeys.find(x => (x.lv.windows || []).some(w => w.id === q.win));
+    if (!s) continue;
+    const horiz = q.side === 'S' || q.side === 'N';
+    const cp = Math.atan2(q.z1 - q.z0, q.run);
+    const axis = q.side === 'S' ? [0, Math.sin(cp), Math.cos(cp)]
+      : q.side === 'N' ? [0, -Math.sin(cp), Math.cos(cp)]
+        : q.side === 'W' ? [Math.sin(cp), 0, Math.cos(cp)] : [-Math.sin(cp), 0, Math.cos(cp)];
+    const el = E('IFCSLAB', [G(`ramp:${q.id}`), owner, str('Пандус ворот'), '$', '$',
+      placeAx(s.pl, [q.pad.x + q.pad.w / 2, Y(q.pad.y + q.pad.h / 2), (q.z0 + q.z1) / 2 - s.lv.base],
+        axis, horiz ? [1, 0, 0] : [0, 1, 0]),
+      bodyOf([paint(boxSolid(horiz ? q.pad.w : q.pad.h, q.len, 100, 0, 0, -100), 'stone')]),
+      str(q.id), '.NOTDEFINED.']);
+    put(s.st, el);
+    matOf('Железобетон', el);
+    addProps(el, `ramp:${q.id}`, [['id', q.id], ['slope', Math.round(q.slope)], ['len', q.len]]);
   }
 
   // ---- отмостка -----------------------------------------------------------
@@ -866,24 +888,23 @@ export function ifc(house, systems = [], opt = {}) {
     // кромке каждого марша со стойками. Отдельным элементом, а не телами
     // лестницы: проверка ходьбы по ступеням не должна спотыкаться о перила
     if (st.rail) {
-      const run = steps * st.tread, climbHalf = rise * (steps + 1);
-      const railLen = Math.round(Math.hypot(run, steps * rise));
+      const climbHalf = rise * (steps + 1);
       const railSolids = [];
       for (const up of [true, false]) {
         const yIn = up ? st.y + width - 50 : st.y + st.h - width;  // внутренняя кромка
         const yc = yIn + 25;
-        const z0 = (up ? rise : climbHalf + rise) + st.rail;      // над первой ступенью
-        const x0 = up ? st.x + st.w : g.landX0 + landing;         // от входного торца марша
-        const dir = up ? -1 : 1;                                  // марш 1 — на запад, марш 2 — обратно
-        const east = (st.entry || 'E') === 'E';
-        const sx = east ? x0 : 2 * (st.x + st.w / 2) - x0;        // зеркало при входе с запада
-        const sdir = east ? dir : -dir;
+        const zOff = up ? 0 : climbHalf;
+        // поручень протянут над серединами первой и последней ступени:
+        // направление и торец входа приходят из stepX, зеркалить нечего
+        const xA = g.stepX(1, up) + st.tread / 2, xB = g.stepX(steps, up) + st.tread / 2;
+        const zA = zOff + rise + st.rail, zB = zOff + rise * steps + st.rail;
+        const railLen = Math.round(Math.hypot(xB - xA, zB - zA));
         railSolids.push(slantSolid(50, 50, railLen,
-          [sx + sdir * st.tread / 2 - cx, Y(yc) - Y(cy), z0],
-          [sdir * run / railLen, 0, steps * rise / railLen], [0, 1, 0]));
+          [xA - cx, Y(yc) - Y(cy), zA],
+          [(xB - xA) / railLen, 0, (zB - zA) / railLen], [0, 1, 0]));
         for (const j of [1, Math.ceil(steps / 2), steps]) {
           const px = g.stepX(j, up) + st.tread / 2;
-          const zs = (up ? 0 : climbHalf) + rise * j;
+          const zs = zOff + rise * j;
           railSolids.push(boxSolid(50, 50, st.rail, px - cx, Y(yc) - Y(cy), zs));
         }
       }
@@ -960,10 +981,16 @@ export function ifc(house, systems = [], opt = {}) {
         x = f.x; y = f.y;
       } else continue;
       const [type, pd, name] = MEP[p.kind] || ['IFCBUILDINGELEMENTPROXY', '.NOTDEFINED.', p.kind];
-      const size = p.kind === 'radiator' ? [p.len || 800, 120, 500]
+      let size = p.kind === 'radiator' ? [p.len || 800, 120, 500]
         : p.kind === 'convector' ? [p.len || 800, 250, 120]
         : p.kind === 'supply' || p.kind === 'exhaust' ? [200, 200, 200] : [120, 120, 120];
-      const pl = place(s.pl, x, Y(y), Math.max(0, p.z - size[2] / 2));
+      // прибор длинной стороной вдоль своей стены: радиатор на восточной
+      // грани, вытянутый по X, перегораживал комнату и протыкал фасад
+      if (p.side === 'E' || p.side === 'W') size = [size[1], size[0], size[2]];
+      // z радиатора и конвектора — их низ (так рисует развёртка), у прочих — ось
+      const z0 = p.kind === 'radiator' || p.kind === 'convector'
+        ? p.z : Math.max(0, p.z - size[2] / 2);
+      const pl = place(s.pl, x, Y(y), z0);
       const args = [G(`mep:${p.id}`), owner, str(name), '$', '$', pl,
         bodyOf([paint(boxSolid(size[0], size[1], size[2]), PAL[sys.id] ? sys.id : 'metal')]), str(p.id)];
       const el = E(type, [...args, pd]);
@@ -1019,7 +1046,7 @@ export function ifc(house, systems = [], opt = {}) {
     }
     for (const t of b.trunks) {
       const segs = trunkSegments3d(house, sys, t);
-      const s = storeys.find(x => x.lv.id === t.srcLevel.id);
+      const s = storeys.find(x => x.lv.id === t.level.id);
       const [cls, pd, sec] = sys.id === 'vk' || sys.id === 'ov'
         ? ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 32]
         : ['IFCCABLECARRIERSEGMENT', '.CONDUITSEGMENT.', 30];
