@@ -81,7 +81,7 @@ const CASES = [
     h => { furn(h, 'cokol', 'щит').l = 'вводно-распределительное'; }],
 
   ['жилая комната без окна', /без естественного света/,
-    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 600) && !(w.side === 'W' && w.a === 3200)); }],
+    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 900)); }],
 
   ['помещение без назначения', /назначение .* не из списка/,
     h => { room(h, 'second', 'Кабинет').use = 'office'; }],

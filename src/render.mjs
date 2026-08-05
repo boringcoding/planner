@@ -98,7 +98,12 @@ export function furnText(f) {
   } else if (f.sym === 'car') {
     d = { t: `${f.h} × ${f.w}`, cx: f.x + f.w / 2, baseline: f.y + f.h - 560, fs: 240, font: 'mono', fit: f.w - 440 };
   } else if (f.sym === 'bed') {
-    d = { t: `${f.w} × ${f.h}`, cx: f.x + f.w / 2, baseline: f.y + f.h - 320, fs: 240, font: 'mono', fit: f.w - 300 };
+    // размер пишется внутри контура, а под узкой кроватью он не помещается.
+    // Тогда он уходит наверх, как у прочей мебели: цифра нужнее пустого места
+    const t = `${f.w} × ${f.h}`;
+    d = { t, cx: f.x + f.w / 2, baseline: f.y + f.h - 320, fs: 240, font: 'mono', fit: f.w - 300 };
+    if (Math.floor(d.fit / (t.length * ADV.mono)) < MIN_FURN_FS)
+      d = { t, cx: f.x + f.w / 2, baseline: f.y - 90, fs: 210, font: 'mono', fit: Math.max(f.w, 800) + 300 };
   } else {
     if (!f.l) return null;
     d = { t: f.l, cx: f.x + f.w / 2, baseline: f.y + (f.lup ? -90 : f.h + 250), fs: 210, font: 'mono', fit: Math.max(f.w, 800) + 300 };

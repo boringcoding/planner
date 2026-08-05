@@ -29,7 +29,9 @@ const PROG = {
   'first.r6': { light: 1, sw: 2 },                                    // тамбур: стены заняты тремя дверями и шкафом
   'first.r2': { sock: [[2, 1100]], light: 1, sw: 1 },
   'first.r5': { sock: [[6, 1100], [4, 300]], power: 1, light: 4, sw: 3 },
-  'second.r1': { sock: [[4, 300], [2, 1100]], light: 2, sw: 2 },
+  'second.r1': { sock: [[3, 300]], light: 1, sw: 1 },                 // гостевая
+  'second.r9': { sock: [[3, 300]], light: 1, sw: 1 },                 // детская
+  'second.r3': { sock: [[1, 300]], light: 2, sw: 2 },                 // коридор
   'second.r2': { sock: [[4, 300], [2, 1100]], light: 2, sw: 1 },
   'second.r6': { sock: [[2, 300]], light: 2, sw: 3 },                 // холл
   'second.r5': { light: 1, sw: 1 },
@@ -280,7 +282,7 @@ for (const L of house.levels) {
     }
 
     // СС: интернет и ТВ там, где сидят; протечка — в мокрых; дым — везде
-    const SS = { 'first.r5': ['data', 'tv'], 'second.r2': ['data', 'data'], 'second.r1': ['data'], 'second.r7': ['data', 'tv'], 'cokol.r8': ['data', 'tv'], 'cokol.r2': ['rack'] };
+    const SS = { 'first.r5': ['data', 'tv'], 'second.r2': ['data', 'data'], 'second.r1': ['data'], 'second.r9': ['data'], 'second.r7': ['data', 'tv'], 'cokol.r8': ['data', 'tv'], 'cokol.r2': ['rack'] };
     const usedSS = [];
     for (const k of SS[room.id] || []) {
       const p = place(house, L, room, 1, k === 'tv' ? 1200 : 300, usedSS, rad)[0];
