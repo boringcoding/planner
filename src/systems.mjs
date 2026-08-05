@@ -72,8 +72,15 @@ export function trunk(house, sys, levelId) {
   if (levelId === src.level) return null;
   const L = house.levels.find(l => l.id === levelId);
   const up = seg(srcL, { x: src.x, y: src.y }, sys.vertical);
-  const len = up.len + Math.abs(L.base - srcL.base) + Math.abs(src.z - runZ(sys, srcL));
-  return { level: L, via: up.via, len: Math.round(len * RESERVE), mat: sys.trunk || 'магистраль' };
+  // стояк меряется между плоскостями прокладки, а не между отметками пола:
+  // потолочная разводка двух уровней разной высоты даёт другой подъём
+  const rz = runZ(sys, srcL);
+  const rise = Math.abs((L.base + runZ(sys, L)) - (srcL.base + rz));
+  const len = up.len + rise + Math.abs(src.z - rz);
+  return {
+    level: L, via: up.via, len: Math.round(len * RESERVE), mat: sys.trunk || 'магистраль',
+    srcLevel: srcL, srcZ: src.z, rz
+  };
 }
 
 // шлейф или луч от этажного узла через точки группы
@@ -105,8 +112,52 @@ export function groupRun(house, sys, points) {
   }
   len += Math.abs(n.z - rz);
   const k = (KIND[order[0].p.kind] || {}).k || 1;
-  return { level: L, points: order.map(x => x.p), via, len: Math.round(len * k * RESERVE) };
+  return { level: L, points: order.map(x => x.p), via, len: Math.round(len * k * RESERVE), rz, node: n };
 }
+
+// ---- трассы в 3D ----------------------------------------------------------
+// Осевые отрезки прогона: те же via, что дали метраж, поднятые на высоту
+// прокладки, плюс вертикали — от узла к плоскости прокладки и от неё
+// к каждой точке. Никакой второй прокладки «для картинки» здесь нет:
+// разойтись с метражом эти отрезки не могут, и правило это сторожит.
+// Отметки z — в координатах уровня.
+export function runSegments3d(run) {
+  const segs = [];
+  if (!run.via.length) return segs;
+  const rz = run.rz;
+  if (run.node.z !== rz)
+    segs.push({ v: true, x: run.node.x, y: run.node.y, z0: Math.min(run.node.z, rz), z1: Math.max(run.node.z, rz) });
+  run.via.forEach((poly, i) => {
+    for (let k = 1; k < poly.length; k++)
+      if (poly[k].x !== poly[k - 1].x || poly[k].y !== poly[k - 1].y)
+        segs.push({ a: poly[k - 1], b: poly[k], z: rz });
+    const p = run.points[i], end = poly[poly.length - 1];
+    if (p.z !== rz)
+      segs.push({ v: true, x: end.x, y: end.y, z0: Math.min(p.z, rz), z1: Math.max(p.z, rz) });
+  });
+  return segs;
+}
+
+// магистраль: разводка на уровне источника плюс подъём стояка до этажа
+export function trunkSegments3d(house, sys, t) {
+  const segs = [];
+  if (t.srcZ !== t.rz)
+    segs.push({ v: true, x: sys.source.x, y: sys.source.y, z0: Math.min(t.srcZ, t.rz), z1: Math.max(t.srcZ, t.rz), level: t.srcLevel });
+  for (let k = 1; k < t.via.length; k++)
+    if (t.via[k].x !== t.via[k - 1].x || t.via[k].y !== t.via[k - 1].y)
+      segs.push({ a: t.via[k - 1], b: t.via[k], z: t.rz, level: t.srcLevel });
+  // стояк: вертикаль от плоскости прокладки источника до плоскости этажа
+  const z0 = t.srcLevel.base + t.rz, z1 = t.level.base + runZ(sys, t.level);
+  segs.push({
+    v: true, x: sys.vertical.x, y: sys.vertical.y,
+    z0: Math.min(z0, z1) - t.srcLevel.base, z1: Math.max(z0, z1) - t.srcLevel.base, level: t.srcLevel
+  });
+  return segs;
+}
+
+// длина осевых отрезков прогона — для правила «3D сходится с метражом»
+export const segsLen = segs => segs.reduce((s, x) =>
+  s + (x.v ? x.z1 - x.z0 : Math.abs(x.b.x - x.a.x) + Math.abs(x.b.y - x.a.y)), 0);
 
 // ведомость: сколько чего и сколько метров какого материала
 export function bill(house, sys) {

@@ -145,7 +145,10 @@ const viewerSection = hasEngine ? `
       <div class="sheet-head">
         <h2>Модель</h2>
         <p class="meta">Тот же дом в IFC4. Файл читает web-ifc — движок, который ничего не знает
-          про этот репозиторий: на экране выгрузка, а не наша геометрия, нарисованная второй раз.</p>
+          про этот репозиторий: на экране выгрузка, а не наша геометрия, нарисованная второй раз.
+          Клик по элементу говорит, что это; alt-клик по фишке слоя оставляет только его;
+          срез режет дом по высоте, список помещений изолирует одно; «оболочка 40%»
+          показывает трассы разделов сквозь стены.</p>
       </div>
       <div class="viewer" id="viewer">
         <div class="v-panel"></div>
@@ -154,8 +157,12 @@ const viewerSection = hasEngine ? `
         <p class="v-status">7 МБ движка загрузятся по нажатию, не раньше</p>
       </div>
       <p class="note">Выгрузка: <a href="house.ifc" download>house.ifc</a> — ${(ifcText.length / 1024).toFixed(0)} КБ,
-        IFC4, единицы миллиметры. Помещения, стены, проёмы с заполнениями, перекрытия, лестница,
-        мебель и ${systems.reduce((n, s) => n + s.points.length, 0)} точек разделов, собранных в четыре системы.
+        IFC4, единицы миллиметры. Помещения, стены с фронтонами, проёмы с заполнениями — дверь
+        здесь коробка с полотном, окно — рама со стеклом, у каждого IfcDoorType/IfcWindowType,
+        стили поверхностей и материалы, поэтому в ArchiCAD файл открывается домом, а не серыми
+        блоками. Кровля с водостоком и снегозадержанием, отмостка, ограждения, лестница, мебель,
+        ${systems.reduce((n, s) => n + s.points.length, 0)} точек разделов и трассы, собранные
+        в четыре системы, — те же прогоны, по которым посчитаны ведомости.
         Идентификаторы вида <code>second.f12</code> уходят в свойства элементов, поэтому обратная связь
         с этим репозиторием не теряется.</p>
     </section>` : '';
@@ -212,6 +219,10 @@ const html = `<!doctype html>
             background: transparent; border: 1px solid #CFCDC4; border-radius: 999px;
             padding: 5px 11px; cursor: pointer; }
   .v-chip.on { color: #171C24; border-color: var(--c); box-shadow: inset 0 0 0 1px var(--c); }
+  .v-range { flex: 0 1 180px; accent-color: #6E7178; }
+  .v-select { font: 13px/1.2 "IBM Plex Sans", system-ui, sans-serif; color: #171C24;
+              background: #FBFAF7; border: 1px solid #CFCDC4; border-radius: 999px;
+              padding: 5px 11px; max-width: 260px; }
   .v-start { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
              font: 15px/1 "IBM Plex Sans", system-ui, sans-serif; color: #171C24; background: #FBFAF7;
              border: 1px solid #171C24; border-radius: 999px; padding: 11px 22px; cursor: pointer; }

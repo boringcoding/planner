@@ -77,10 +77,20 @@ const status = await page.locator('.v-status').textContent();
 fs.mkdirSync('out', { recursive: true });
 await page.locator('#viewer').screenshot({ path: 'out/viewer.png' });
 await page.screenshot({ path: 'out/site.png', fullPage: false });
+// фасады и начинка: симметрию окон и трассы разделов видно только с этих
+// ракурсов, изометрия их прячет. Кнопки — те же, что жмёт человек
+const shotChip = async (text, file) => {
+  await page.locator('.v-chip', { hasText: text }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('#viewer').screenshot({ path: file });
+};
+await shotChip('юз', 'out/viewer-sw.png');
+await shotChip('св', 'out/viewer-ne.png');
+await shotChip('оболочка 40%', 'out/viewer-ghost.png');
 await browser.close();
 server.close();
 
-console.log(`out/viewer.png · out/site.png`);
+console.log(`out/viewer.png · out/viewer-sw.png · out/viewer-ne.png · out/viewer-ghost.png · out/site.png`);
 console.log(`  смотрелка: ${status.trim()}`);
 if (problems.length) {
   console.log(`  браузер ругается (${problems.length}):`);

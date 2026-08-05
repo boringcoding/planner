@@ -84,7 +84,7 @@ const CASES = [
     h => { furn(h, 'cokol', 'щит').l = 'вводно-распределительное'; }],
 
   ['жилая комната без окна', /без естественного света/,
-    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => !(w.side === 'S' && w.a === 900)); }],
+    h => { lvl(h, 'second').windows = lvl(h, 'second').windows.filter(w => w.id !== 'second.g1'); }],
 
   ['помещение без назначения', /назначение .* не из списка/,
     h => { room(h, 'second', 'Кабинет').use = 'office'; }],
@@ -260,6 +260,64 @@ const CASES = [
 
   ['дымоход встал перед окном', /стоит перед окном/,
     h => { h.levels.forEach(L => (L.flues || []).forEach(f => { if (f.id.endsWith('k2')) f.y = 4400; })); }],
+
+  ['марш сузили', /марш \d+ мм уже/,
+    h => { h.levels.forEach(L => { if (L.stair) L.stair.h = 1800; }); }],
+
+  ['шаг лестницы неудобен', /лестница неудобна/,
+    h => { h.levels.forEach(L => { if (L.stair) L.stair.tread = 320; }); }],
+
+  ['перекрытие давит на марш', /над маршем \d+ мм/,
+    h => { lvl(h, 'first').clear = 1900; }],
+
+  ['марш без ограждения', /ограждение марша/,
+    h => { delete lvl(h, 'first').stair.rail; }],
+
+  ['створка уже машиноместа', /уже машиноместа/,
+    h => { const g = lvl(h, 'first').windows.find(w => w.id === 'first.g1'); g.b = g.a + 2150; }],
+
+  ['гараж мельче машиноместа', /машиноместу нужно/,
+    h => { room(h, 'first', 'Гараж').h = 5200; }],
+
+  ['дверь из гаража без огнестойкости', /не помечена противопожарной/,
+    h => { delete lvl(h, 'first').openings.find(o => o.fire).fire; }],
+
+  ['стена гаража без огнестойкости', /стена .* не помечена противопожарной/,
+    h => { delete lvl(h, 'first').walls.find(w => w.fire).fire; }],
+
+  ['жилая площадь без света', /числится жилым .* света нет/,
+    h => { room(h, 'cokol', 'Зона отдыха').use = 'live'; }],
+
+  ['межкомнатная дверь узка', /дверь .* шириной \d+, нужно 800/,
+    h => { lvl(h, 'first').openings.find(o => o.id === 'first.o5').w = 600; }],
+
+  ['дверь санузла узка', /дверь .* шириной \d+, нужно 700/,
+    h => { lvl(h, 'first').openings.find(o => o.id === 'first.o4').w = 600; }],
+
+  ['входная дверь узка', /входная дверь .* нужно 900/,
+    h => { lvl(h, 'first').windows.find(w => w.kind === 'entrance').b -= 200; }],
+
+  ['этаж просел по высоте', /высота в чистоте/,
+    h => { lvl(h, 'second').clear = 2300;
+           lvl(h, 'second').windows.forEach(w => { if ((w.sill || 0) + w.hz > 2300) w.sill = 2300 - w.hz; }); }],
+
+  ['низкое окно этажа без ограждения', /подоконник \d+ на отметке .* нужно 900/,
+    h => { delete lvl(h, 'second').windows.find(w => w.pano).guard; }],
+
+  ['настил со ступенями без ограждения', /ограждение веранды/,
+    h => { lvl(h, 'first').veranda.rail = 500; }],
+
+  ['отмостку забыли', /отмостки нет/,
+    h => { delete h.site.apron; }],
+
+  ['оси окон почти совпали', /разъехались на \d+ — совместить/,
+    h => { const w = lvl(h, 'second').windows.find(x => x.id === 'second.g4'); w.a += 200; w.b += 200; }],
+
+  ['ворота почти симметричны', /почти симметрично хуже, чем симметрично/,
+    h => { const w = lvl(h, 'first').windows.find(x => x.id === 'first.g2'); w.a += 100; w.b += 100; }],
+
+  ['окно почти по центру помещения', /почти по центру/,
+    h => { const w = lvl(h, 'second').windows.find(x => x.id === 'second.g8'); w.a -= 100; w.b -= 100; }],
 ];
 
 // правила разделов: ломается data/systems.json, дом остаётся прежним

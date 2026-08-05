@@ -51,10 +51,11 @@ const MM = 1000;                                   // из метров движ
 const GROUPS = [
   ['walls', ['IFCWALL', 'IFCWALLSTANDARDCASE']],
   ['slabs', ['IFCSLAB']],
-  ['roof', ['IFCROOF', 'IFCCHIMNEY']],
+  // водосток без раздела — кровельный: трубы разделов заберёт sysOf раньше
+  ['roof', ['IFCROOF', 'IFCCHIMNEY', 'IFCPIPESEGMENT']],
   ['openings', ['IFCDOOR', 'IFCWINDOW']],
   ['stairs', ['IFCSTAIR', 'IFCSTAIRFLIGHT']],
-  ['outside', ['IFCPILE', 'IFCCOLUMN', 'IFCPLATE', 'IFCBEAM']],
+  ['outside', ['IFCPILE', 'IFCCOLUMN', 'IFCPLATE', 'IFCBEAM', 'IFCRAILING']],
   ['furniture', ['IFCFURNISHINGELEMENT', 'IFCFURNITURE']],
   ['shafts', ['IFCBUILDINGELEMENTPROXY']],
   ['spaces', ['IFCSPACE']]
@@ -89,6 +90,11 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCBEAM))) {
   const t = api.GetLine(model, e).Tag;
   if (t && String(t.value).startsWith('roof.')) groupOf.set(e, 'roof');
 }
+// ограждение бывает и на веранде, и на марше: различает метка элемента
+for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCRAILING))) {
+  const t = api.GetLine(model, e).Tag;
+  if (t && String(t.value).endsWith('.srail')) groupOf.set(e, 'stairs');
+}
 const sysOf = new Map();
 for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELASSIGNSTOGROUP))) {
   const r = api.GetLine(model, rid);
@@ -116,6 +122,14 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCSLAB))) {
   if (t && /^roof\.slope/.test(String(t.value))) slopes.add(e);
 }
 const slope = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] };
+// фронтоны — стены с меткой roof.gable*: их верх обязан дойти до низа
+// кровельного тела, иначе под скатами открытый треугольник
+const gables = new Set();
+for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCWALL))) {
+  const t = api.GetLine(model, e).Tag;
+  if (t && /^roof\.gable/.test(String(t.value))) gables.add(e);
+}
+const gbox = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] };
 
 api.StreamAllMeshes(model, mesh => {
   meshes++;
@@ -148,6 +162,10 @@ api.StreamAllMeshes(model, mesh => {
           if (p[a] < slope.mn[a]) slope.mn[a] = p[a];
           if (p[a] > slope.mx[a]) slope.mx[a] = p[a];
         }
+        if (gables.has(e)) {
+          if (p[a] < gbox.mn[a]) gbox.mn[a] = p[a];
+          if (p[a] > gbox.mx[a]) gbox.mx[a] = p[a];
+        }
         if (key === 'spaces') continue;                 // помещения — воздух, габарит не их
         if (p[a] < box.mn[a]) box.mn[a] = p[a];
         if (p[a] > box.mx[a]) box.mx[a] = p[a];
@@ -172,7 +190,8 @@ if (lost.size)
   for (const [what, tri] of lost)
     errs.push(`${what}: ${Math.round(tri)} треугольников не привязаны к этажу — смотрелка их не покажет`);
 
-const need = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'furniture', 'shafts'];
+const need = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'furniture', 'shafts',
+  'eom', 'vk', 'ov', 'ss'];
 for (const k of need)
   if (!stat.has(k) || stat.get(k).tri === 0) errs.push(`слой «${k}» пуст: геометрии нет вовсе`);
 if (V && (!stat.has('outside') || stat.get('outside').tri === 0))
@@ -201,6 +220,22 @@ else {
     errs.push(`скаты накрывают ${Math.round(slope.mx[0] - slope.mn[0])} поперёк, контур кровли ${g.out.w}`);
 }
 
+// Фронтоны: два, во всю ширину пролёта, от чердачного перекрытия до низа
+// кровельного тела. Скаты достают до конька и без них — «верх модели»
+// дыру на торцах не ловит, поэтому фронтоны меряются отдельно
+if (house.roof) {
+  if (gables.size !== 2) errs.push(`фронтонов ${gables.size}, а двускатной кровле нужно два`);
+  else {
+    if (Math.abs(gbox.mx[2] - g.gableApexZ) > 5)
+      errs.push(`верх фронтона ${Math.round(gbox.mx[2])}, низ кровельного тела на коньке ${g.gableApexZ}`);
+    if (Math.abs(gbox.mn[2] - g.gableBase) > 5)
+      errs.push(`низ фронтона ${Math.round(gbox.mn[2])}, чердачное перекрытие ${g.gableBase}`);
+    const across = g.alongY ? gbox.mx[0] - gbox.mn[0] : gbox.mx[1] - gbox.mn[1];
+    if (Math.abs(across - g.span) > 5)
+      errs.push(`фронтон закрывает ${Math.round(across)} поперёк, пролёт ${g.span}`);
+  }
+}
+
 // Низ — подошва сваи веранды либо плита основания
 const bottom = Math.min(V ? V.pileBottom : 0, house.levels[0].base - 400);
 if (Math.abs(box.mn[2] - bottom) > 5)
@@ -219,7 +254,8 @@ if (box.mx[0] < planX[1] - 5) errs.push(`модель кончается на x 
 // воздух: движок их и не должен отдавать
 const SOLID = ['IFCWALL', 'IFCSLAB', 'IFCDOOR', 'IFCWINDOW', 'IFCSTAIR', 'IFCSTAIRFLIGHT',
   'IFCFURNISHINGELEMENT', 'IFCBUILDINGELEMENTPROXY', 'IFCBEAM', 'IFCPILE', 'IFCCOLUMN',
-  'IFCPLATE', 'IFCCHIMNEY'];
+  'IFCPLATE', 'IFCCHIMNEY', 'IFCRAILING', 'IFCPIPESEGMENT', 'IFCDUCTSEGMENT',
+  'IFCCABLECARRIERSEGMENT'];
 for (const t of SOLID) {
   const code = WebIFC[t];
   if (typeof code !== 'number') { errs.push(`движок не знает типа ${t}`); continue; }

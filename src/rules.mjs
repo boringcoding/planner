@@ -53,7 +53,21 @@ export const LIMITS = {
   facadeGap: 400,          // между любыми двумя выносами на одной стене
   yardPass: 1200,          // ровная земля между самым дальним выносом и границей
   body: 550,               // ширина тела, которым проверяется проходимость пола
-  nook: 0.5e6              // клочок свободного пола мельче — щель, а не проход
+  nook: 0.5e6,             // клочок свободного пола мельче — щель, а не проход
+  facadeAxisSnap: 600,     // оси окон соседних этажей: совпали или разведены не меньше
+  roomAxisSnap: 400,       // окно почти по центру помещения ставится в центр точно
+  lowSill: 600,            // ниже — окно выше первого этажа требует ограждения
+  guardRail: 900,          // высота ограждения: низкие окна, марши, настилы
+  entranceW: 900,          // ширина входной двери — эвакуационный выход
+  doorW: 800,              // межкомнатная дверь
+  wetDoorW: 700,           // дверь в санузел
+  clearLive: 2500,         // чистая высота уровня с жилыми помещениями
+  clearService: 2100,      // и любого другого
+  stairW: 900,             // ширина марша
+  stairHead: 2000,         // от ступени до низа перекрытия над маршем
+  stairStep: [600, 650],   // формула удобства 2r + t
+  carBay: [2500, 5300],    // машиноместо на створку ворот: ширина и глубина
+  apronMin: 800            // ширина отмостки
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -338,6 +352,12 @@ export function check(house, brief) {
       const car = cars.find(c => Math.abs(c.x + c.w / 2 - gc) < 150);
       if (!car) E(L, `нет машины по центру ворот ${g.a}–${g.b} (центр ${gc})`);
       else if (car.w + 300 > g.b - g.a) E(L, `створка ${g.b - g.a} мм узка для машины ${car.w} мм`);
+      // 12а. машиноместо по СП 113: ширина створки и глубина по ходу заезда
+      if (g.b - g.a < LIMITS.carBay[0]) E(L, `створка ${g.b - g.a} мм уже машиноместа ${LIMITS.carBay[0]}`);
+      const bay = rooms.find(r => r.tag === 'garage');
+      const depth = bay && (g.side === 'S' || g.side === 'N' ? bay.h : bay.w);
+      if (bay && depth < LIMITS.carBay[1])
+        E(L, `гараж ${depth} мм в глубину, машиноместу нужно ${LIMITS.carBay[1]}`);
     }
 
     // 13. лестница
@@ -356,6 +376,20 @@ export function check(house, brief) {
       const g = stairGeom(st);
       if (g.landing < st.landing) E(L, `площадка ${g.landing} меньше заданной ${st.landing}: марш ${g.run} не влезает в шахту ${st.w}`);
       if (g.landing < g.width) E(L, `площадка ${g.landing} уже марша ${g.width}`);
+      // 13а. ширина марша, формула удобства и высота над головой: всё это
+      // держалось на текущих числах и уехало бы молча при любой правке шахты
+      if (g.width < LIMITS.stairW) E(L, `марш ${g.width} мм уже ${LIMITS.stairW}`);
+      const step = 2 * rise + st.tread;
+      if (other && (step < LIMITS.stairStep[0] || step > LIMITS.stairStep[1]))
+        E(L, `лестница неудобна: 2·${rise} + ${st.tread} = ${step}, норма ${LIMITS.stairStep.join('…')}`);
+      // над маршем — вырез в перекрытии; головой встречают его торец
+      if (house.levels[i + 1]) {
+        const head = house.levels[i + 1].base - L.base - (L.floorToFloor - L.clear);
+        if (head < LIMITS.stairHead) E(L, `над маршем ${head} мм до перекрытия, нужно ${LIMITS.stairHead}`);
+        // 13б. марш с перепадом в этаж без ограждения — падение, а не спуск
+        if (!st.rail || st.rail < LIMITS.guardRail)
+          E(L, `ограждение марша ${st.rail || 'не задано'}, нужно ${LIMITS.guardRail}`);
+      }
     }
 
     // 14. дверь не открывается на марш. Перед полотном нужен ровный пол;
@@ -419,6 +453,17 @@ export function check(house, brief) {
         const other = rooms.find(rm => rm !== garage && overlap(grown, rm) > 1000);
         if (other && other.tag !== 'lock')
           E(L, `проём ${o.x},${o.y} ведёт из гаража прямо в «${other.name}» — нужен тамбур`);
+        // 16б. дверь из гаража в дом — противопожарная. Флаг в данных был,
+        // а правила не было: убери его — и прогон оставался чистым
+        if (other && !o.fire)
+          E(L, `дверь ${o.x},${o.y} из гаража в «${other.name}» не помечена противопожарной`);
+      }
+      // стена между гаражом и домом — противопожарная по всей длине
+      for (const w of walls) {
+        if (w.fire) continue;
+        const grown = grow(w, 60);
+        if (overlap(grown, garage) > 1000 && rooms.some(rm => rm !== garage && overlap(grown, rm) > 1000))
+          E(L, `стена ${w.id} между гаражом и домом не помечена противопожарной`);
       }
     }
 
@@ -434,6 +479,11 @@ export function check(house, brief) {
       if (min < lim) E(L, `«${r.name}» ${min} мм по узкой стороне, нужно ${lim}`);
       if (r.tag === 'quiet' && !wins.some(w => overlap(windowBand(w, S, 300), r) > 1000))
         E(L, `«${r.name}» без естественного света не может быть жилой комнатой`);
+      // 17а. это касается любого помещения, посчитанного в жилую площадь:
+      // «зона отдыха» в цоколе без единого окна сидела в 87 м² жилой
+      if (r.use === 'live' && r.tag !== 'quiet'
+        && !wins.some(w => !w.kind && overlap(windowBand(w, S, 300), r) > 1000))
+        E(L, `«${r.name}» числится жилым (use: live), а естественного света нет`);
     }
 
     // 18. шахта стояка внутри мокрого помещения и свободна от оборудования
@@ -517,6 +567,15 @@ export function check(house, brief) {
       const hz = o.hz || 0;
       if (hz < LIMITS.doorHzMin) E(L, `проём ${o.x},${o.y} высотой ${hz} ниже ${LIMITS.doorHzMin}`);
       if (hz > L.clear) E(L, `проём ${o.x},${o.y} высотой ${hz} не влезает под потолок ${L.clear}`);
+      // 26а. ширина двери: в санузел уже, межкомнатная не меньше нормы.
+      // Ширина нигде не проверялась — только высоты
+      if (o.kind !== 'pass') {
+        const r = openingRect(o);
+        const grown = o.dir === 'h' ? rect(r.x, r.y - 150, r.w, r.h + 300) : rect(r.x - 150, r.y, r.w + 300, r.h);
+        const wet = rooms.some(rm => rm.tag === 'wet' && overlap(grown, rm) > 1000);
+        const lim = wet ? LIMITS.wetDoorW : LIMITS.doorW;
+        if (o.w < lim) E(L, `дверь ${o.x},${o.y} шириной ${o.w}, нужно ${lim}`);
+      }
     }
     for (const w of wins) {
       const sill = w.sill || 0, hz = w.hz || 0;
@@ -524,10 +583,22 @@ export function check(house, brief) {
       else if (sill + hz > L.clear) E(L, `окно ${w.side} ${w.a}–${w.b}: верх ${sill + hz} выше потолка ${L.clear}`);
       if ((w.kind === 'entrance' || w.kind === 'door') && (sill > 0 || hz < LIMITS.doorHzMin))
         E(L, `дверь ${w.side} ${w.a}–${w.b}: порог ${sill}, высота ${hz}`);
+      // 26б. входная дверь — эвакуационный выход, 800 в проёме мало
+      if (w.kind === 'entrance' && w.b - w.a < LIMITS.entranceW)
+        E(L, `входная дверь ${w.id} шириной ${w.b - w.a}, эвакуационному выходу нужно ${LIMITS.entranceW}`);
+      if (w.kind === 'door' && w.b - w.a < LIMITS.doorW)
+        E(L, `наружная дверь ${w.id} шириной ${w.b - w.a}, нужно ${LIMITS.doorW}`);
     }
     for (const f of furn)
       if ((f.hz || 0) > L.clear)
         E(L, `${f.l || f.sym} высотой ${f.hz} не встаёт под потолок ${L.clear}`);
+
+    // 26в. высота этажа в чистоте: жилым помещениям — своя норма, прочим —
+    // своя. Сравнивать L.clear с минимумом не приходило в голову никому
+    {
+      const lim = rooms.some(r => r.use === 'live') ? LIMITS.clearLive : LIMITS.clearService;
+      if (L.clear < lim) E(L, `высота в чистоте ${L.clear}, помещениям уровня нужно ${lim}`);
+    }
 
     // 27. света в жилой комнате не меньше нормы: площадь светового проёма
     // от 1/8 площади пола. И не больше 1/4,5: при расчётной −33 °C лишнее
@@ -577,6 +648,10 @@ export function check(house, brief) {
       const host = rooms.find(r => overlap(windowBand(w, S, 300), r) > 1000);
       if (host && host.tag === 'wet' && sill < LIMITS.sillWet)
         E(L, `окно ${w.id} в «${host.name}»: подоконник ${sill} ниже ${LIMITS.sillWet}`);
+      // 27г. подоконник ниже 600 на этаже выше первого — за стеклом обрыв
+      // в этаж; такому окну нужно ограждение, и метка pano его не отменяет
+      if (L.base > 0 && sill < LIMITS.lowSill && (!w.guard || w.guard < LIMITS.guardRail))
+        E(L, `окно ${w.id}: подоконник ${sill} на отметке ${L.base}, ограждение ${w.guard || 'не задано'} — нужно ${LIMITS.guardRail}`);
     }
 
     // 27в. входная дверь ведёт в тамбур, а не сразу в дом
@@ -724,6 +799,11 @@ export function check(house, brief) {
     const need = (house.site.ground ?? -300) - Math.round((house.site.frost || 0) * 1.1);
     if (house.site.frost && V.pileBottom > need)
       errs.push(`низ сваи веранды ${V.pileBottom}, промерзание ${house.site.frost} требует ${need}`);
+    // 30д. настил со ступенями или с перепадом от земли ограждается;
+    // заявленное ограждение не ниже нормы
+    const drop = v.deck - (house.site.ground ?? -300);
+    if ((v.steps || drop > 600) && (!v.rail || v.rail < LIMITS.guardRail))
+      errs.push(`ограждение веранды ${v.rail || 'не задано'}, нужно ${LIMITS.guardRail}`);
     // 30г. Снеговой мешок у стены над навесом. Прежнее правило сравнивало
     // подоконник с плоскостью навеса и аттестовало как норму окно, которое
     // всю зиму стоит в сугробе: снег ложится НА навес и подпирает стену выше него
@@ -768,6 +848,15 @@ export function check(house, brief) {
       errs.push(`лоток приямка ${p.id}: уклон ${p.chute}°, норма ${lo}…${hi}`);
     if (p.top - p.chuteTop < LIMITS.chuteHead)
       errs.push(`лоток приямка ${p.id}: до крышки ${p.top - p.chuteTop} мм, сбрасывать некуда`);
+  }
+
+  // 31г. отмостка: она есть, она не уже нормы, и борт приямка меряется
+  // от неё не зря — плоскость наконец существует телом в модели
+  {
+    const A = house.site && house.site.apron;
+    if (!A) errs.push('отмостки нет: вода со свесов уходит под фундамент');
+    else if ((A.out ?? 0) < LIMITS.apronMin)
+      errs.push(`отмостка ${A.out} мм уже ${LIMITS.apronMin}`);
   }
 
   // 31в. люк выходит на поленницу, а не рядом с ней. На плане люк в стене и
@@ -849,6 +938,50 @@ export function check(house, brief) {
       for (let j = i + 1; j < rb.length; j++)
         if (overlap(shrink(rb[i], LIMITS.labelClear), shrink(rb[j], LIMITS.labelClear)) > 0)
           errs.push(`кровля: подписи наезжают: ${rb[i].kind} «${rb[i].owner}» и ${rb[j].kind} «${rb[j].owner}»`);
+  }
+
+  // 35. фасад: оси окон между этажами либо совпадают, либо разведены
+  // не меньше facadeAxisSnap — «почти совпало» читается с земли как ошибка.
+  // Парные ворота стоят симметрично к осям фасада. Окно, вставшее почти
+  // по центру своего помещения, ставится в центр точно — если оно не
+  // держит ось окна другого этажа. Подземное (люк в приямке) — не окно
+  {
+    const ground = house.site.ground ?? -300;
+    for (const side of ['S', 'N', 'E', 'W']) {
+      const items = house.levels.flatMap(L => (L.windows || [])
+        .filter(w => w.side === side && L.base + (w.sill || 0) + (w.hz || 0) > ground)
+        .map(w => ({ w, L, c: (w.a + w.b) / 2 })));
+      // 35а. пары с разных уровней
+      for (let i = 0; i < items.length; i++)
+        for (let j = i + 1; j < items.length; j++) {
+          const a = items[i], b = items[j];
+          if (a.L === b.L) continue;
+          const d = Math.abs(a.c - b.c);
+          if (d > 0 && d < LIMITS.facadeAxisSnap)
+            errs.push(`фасад ${side}: оси ${a.w.id} (${a.c}) и ${b.w.id} (${b.c}) разъехались на ${d} — совместить или развести на ${LIMITS.facadeAxisSnap}`);
+        }
+      // 35б. парные ворота: равные поля от углов фасада
+      const gates = items.filter(x => x.w.kind === 'gate');
+      if (gates.length === 2) {
+        const len = side === 'S' || side === 'N' ? S.w : S.h;
+        const m1 = Math.min(gates[0].w.a, gates[1].w.a);
+        const m2 = len - Math.max(gates[0].w.b, gates[1].w.b);
+        if (m1 !== m2 && Math.abs(m1 - m2) < LIMITS.facadeAxisSnap)
+          errs.push(`фасад ${side}: поля от углов до ворот ${m1} и ${m2} — почти симметрично хуже, чем симметрично`);
+      }
+      // 35в. окно почти по центру помещения
+      for (const it of items) {
+        if (it.w.kind) continue;
+        const host = it.L.rooms.find(r => overlap(windowBand(it.w, S, 300), r) > 1000);
+        if (!host) continue;
+        const c0 = side === 'S' || side === 'N' ? host.x + host.w / 2 : host.y + host.h / 2;
+        const d = Math.abs(it.c - c0);
+        // держит ось другого этажа — центр помещения уступает оси фасада
+        const holdsAxis = items.some(o => o.L !== it.L && o.c === it.c);
+        if (d > 0 && d < LIMITS.roomAxisSnap && !holdsAxis)
+          errs.push(`фасад ${side}: окно ${it.w.id} почти по центру «${host.name}» (${it.c} против ${c0}) — в центр или дальше ${LIMITS.roomAxisSnap}`);
+      }
+    }
   }
 
   // 14. мокрые помещения строго друг над другом

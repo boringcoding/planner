@@ -6,7 +6,7 @@
 // не видно границы, всегда «дешевле» настоящей.
 
 import { bill } from './systems.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom } from './roof.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
 const mm = v => v / 1000;                      // мм -> м
@@ -103,7 +103,7 @@ export function quantities(house, systems) {
   // «пролёт × подъём», как считалось раньше. Считает roofGeom, здесь только два
   const gable = 2 * g.gable;
   q.facade = q.perimOuter * (mm(first.floorToFloor + second.floorToFloor) + 0.4) + gable
-    - q.openFirst - q.openSecond;
+    + g.friezeArea - q.openFirst - q.openSecond;
 
   // ---- окна и двери --------------------------------------------------------
   const wins = house.levels.flatMap(L => L.windows || []);
@@ -142,7 +142,10 @@ export function quantities(house, systems) {
   }, 0);
   q.steps = stairs.reduce((s, L) => s + L.stair.risers, 0);
   q.railing = stairs.reduce((s, L) => s + 2 * mm(L.stair.w - L.stair.landing) + mm(L.stair.h), 0);
-  q.blind = q.perimOuter + 8;
+  // отмостка — из той же геометрии, что и выгрузка: полосы с разрывами
+  // под выносы, а не «периметр плюс сколько-то»
+  const blind = blindGeom(house);
+  q.blind = blind.length ? blind.reduce((s, b) => s + mm(Math.max(b.w, b.h)), 0) : q.perimOuter + 8;
   const V = verandaGeom(house);
   q.veranda = V ? V.deckArea : 0;
   q.verandaRoof = V ? V.canopyArea : 0;                      // навес шире настила на свес

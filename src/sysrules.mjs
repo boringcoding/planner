@@ -3,7 +3,7 @@
 // дверном полотне и вытяжка, которой нет, — всё это на картинке незаметно.
 
 import { face, faceItems, SIDES } from './model.mjs';
-import { KIND, place, reach, bill } from './systems.mjs';
+import { KIND, RESERVE, place, reach, bill, runSegments3d, segsLen } from './systems.mjs';
 import { roomBlock } from './render.mjs';
 import { elevBoxes, elevationRooms } from './elev.mjs';
 
@@ -178,6 +178,18 @@ export function checkSystems(house, data) {
     // 10. ведомость считается целиком: точка без метража — дыра в смете
     const b = bill(house, sys);
     if (!b.total) E('ведомость пуста');
+
+    // 10а. 3D-трасса собрана из тех же прогонов, что и метраж: сумма осевых
+    // отрезков, умноженная на жилы и запас, обязана дать длину прогона.
+    // Разошлись — значит картинка в модели врёт ведомости
+    for (const r of b.runs) {
+      const segs = runSegments3d(r);
+      if (!segs.length) continue;
+      const k = (KIND[r.points[0].kind] || {}).k || 1;
+      const got = Math.round(segsLen(segs) * k * RESERVE);
+      if (Math.abs(got - r.len) > 1)
+        E(`трасса ${r.key}: осевые отрезки дают ${got} мм, ведомость ${r.len}`);
+    }
   }
 
   // 11. за радиатором точек нет. На плане розетка рядом с радиатором

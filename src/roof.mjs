@@ -44,16 +44,41 @@ export function roofGeom(house) {
   const slopeRun = span / 2 + R.eave;                       // в плане от конька до края
   const slopeLen = Math.round(slopeRun / Math.cos(p));      // по скату
   const slopeW = len + 2 * R.gable;                         // длина ската вдоль конька
-  // Фронтон — не треугольник от верха стены до конька: снизу его подрезает
-  // затяжка, сверху — низ стропила. Считается интегралом, а не «span × rise»
-  const gable = (span * R.tie[0] + 2 * tan * (half * span / 2 - span * span / 8)) / 1e6;
+  // Щипцовая стена встаёт от верха чердачного перекрытия до низа кровельного
+  // тела: без неё под скатами открытый треугольник, и дом дырявый с обоих
+  // торцов. Низ тела — верх покрытия минус его толщина по нормали, переведённая
+  // в вертикаль. Площадь фронтона считается с этого же профиля: смета, выгрузка
+  // и проверка модели разойтись не могут, потому что источник один
+  const rafterDrop = Math.round(R.rafter[0] / Math.cos(p));
+  const gableBase = R.base;                                 // верх чердачного перекрытия
+  const underAt = d => planeZ - (d - half) * tan - rafterDrop;   // низ тела над точкой в d от конька
+  const gableEdgeZ = Math.round(underAt(span / 2));
+  const gableApexZ = ridgeZ - rafterDrop;
+  const gEdge = gableEdgeZ - gableBase, gApex = gableApexZ - gableBase;
+  const gable = (span * gEdge + (gApex - gEdge) * span / 2) / 1e6;
+  // Карнизные стены не доходят до того же низа: вдоль них между чердачной
+  // плитой и телом ската остаётся щель в полторы сотни миллиметров на всю
+  // длину дома. Её закрывает фризовый пояс — клин на толщину стены,
+  // трапеция от наружной грани к внутренней
+  const friezeIn = Math.round(underAt(span / 2 - S.wall)) - gableBase;
+  const friezeLen = len - 2 * S.wall;                       // между фронтонами
   return {
     pitch: R.pitch, alongY, span, len, half, deck, rise, ridgeZ, eaveZ, rafterZ,
     ground, out, ridge, slopeRun, slopeLen, slopeW,
+    rafterDrop, gableBase, gableEdgeZ, gableApexZ,
+    // профиль щипцовой стены в координатах «вдоль торца × вверх от gableBase»:
+    // по нему выгружается стена, по нему же считается смета и проверяется модель
+    gableProf: [[0, 0], [span, 0], [span, gEdge], [span / 2, gApex], [0, gEdge]],
+    // фризовый клин карнизной стены: профиль поперёк стены, тянется вдоль дома
+    friezeProf: [[0, 0], [S.wall, 0], [S.wall, friezeIn], [0, gEdge]],
+    friezeLen,
+    friezeArea: 2 * friezeLen * (gEdge + friezeIn) / 2 / 1e6,   // оба пояса, м²
+    // продух фронтона: у конька, размером из решения R.vent
+    ventBox: { w: R.vent, h: Math.max(200, Math.round(R.vent * 0.6)), v: gApex - Math.round(R.vent * 1.2) },
     area: 2 * slopeLen * slopeW / 1e6,                      // площадь скатов, м²
     plan: out.w * out.h / 1e6,                              // площадь в плане, м²
     attic: (S.w - 2 * S.wall) * (S.h - 2 * S.wall) / 1e6,   // чердачное перекрытие
-    gable,                                                  // площадь одного фронтона, м²
+    gable,                                                  // площадь одного фронтона по профилю, м²
     // Ферма на каждую стропильную пару: затяжка она же балка перекрытия,
     // стропила, бабка. Прогона и стоек под ним нет и быть не может —
     // под линией конька несущей стены нет на всю длину дома
@@ -73,6 +98,76 @@ export function roofGeom(house) {
       return planeZ - (d - half) * tan;
     }
   };
+}
+
+// ───────────────────────────────────────────────────────────── водосток
+// Жёлоб висит под нижней кромкой ската, труба стоит у стены, между ними
+// колено под свесом. Метраж жёлоба и число труб давно считает roofGeom,
+// и смета за них платит — а тела в модели не было, и на доме их не было.
+export function gutterGeom(house) {
+  if (!house.roof) return null;
+  const R = house.roof, g = roofGeom(house), S = house.shell;
+  const p = rad(R.pitch);
+  const lipZ = g.eaveZ - Math.round(R.rafter[0] * Math.cos(p));  // нижняя кромка тела ската
+  const r = R.gutter / 2;
+  const zG = lipZ - r;                                     // ось жёлоба
+  const perEave = Math.max(2, Math.ceil(g.slopeW / 10000));
+  const gutters = [], drains = [];
+  for (const n of [-1, 1]) {
+    const edge = g.alongY
+      ? (n < 0 ? g.out.x : g.out.x + g.out.w)              // кромка свеса
+      : (n < 0 ? g.out.y : g.out.y + g.out.h);
+    const wall = g.alongY ? (n < 0 ? 0 : S.w) : (n < 0 ? 0 : S.h);
+    const a0 = g.alongY ? g.out.y : g.out.x;
+    const a1 = g.alongY ? g.out.y + g.out.h : g.out.x + g.out.w;
+    gutters.push({ id: `roof.gutter${n > 0 ? 2 : 1}`, alongY: g.alongY, edge, a0, a1, z: zG, r });
+    for (let i = 0; i < perEave; i++) {
+      const at = Math.round(a0 + 500 + (a1 - a0 - 1000) * i / (perEave - 1));
+      drains.push({
+        id: `roof.drain${n > 0 ? 2 : 1}${i + 1}`, alongY: g.alongY, at,
+        edge, wall: wall + (n < 0 ? -100 : 100),           // ось трубы у стены
+        z0: g.ground, z1: zG, r: 50
+      });
+    }
+  }
+  return { gutters, drains, zG, lipZ };
+}
+
+// ───────────────────────────────────────────────────────────── отмостка
+// Полоса по периметру, верх вровень с планировочной землёй. Правило про
+// борт приямка «выше отмостки» ссылалось на плоскость, которой в модели
+// не было. Выносы — приямок, крыльцо, дымоходы — стоят в этой полосе,
+// и под ними отмостка разрывается, а не проходит сквозь бетон
+export function blindGeom(house) {
+  const A = house.site && house.site.apron;
+  if (!A) return [];
+  const S = house.shell, out = A.out ?? 1000, th = A.th ?? 100;
+  const ground = house.site.ground ?? -300;
+  const bits = outsideBits(house);
+  const strips = [];
+  const bands = side => bits.filter(b => b.side === side)
+    .map(b => [b.band[0] - 50, b.band[1] + 50]).sort((a, b) => a[0] - b[0]);
+  const cut = (a0, a1, side) => {
+    const holes = bands(side), spans = [];
+    let at = a0;
+    for (const [h0, h1] of holes) {
+      if (h1 <= a0 || h0 >= a1) continue;
+      if (h0 > at) spans.push([at, Math.min(h0, a1)]);
+      at = Math.max(at, h1);
+    }
+    if (at < a1) spans.push([at, a1]);
+    return spans.filter(([s0, s1]) => s1 - s0 > 100);
+  };
+  let n = 0;
+  for (const [s0, s1] of cut(-out, S.w + out, 'S'))
+    strips.push({ id: `site.apron${++n}`, x: s0, y: -out, w: s1 - s0, h: out });
+  for (const [s0, s1] of cut(-out, S.w + out, 'N'))
+    strips.push({ id: `site.apron${++n}`, x: s0, y: S.h, w: s1 - s0, h: out });
+  for (const [s0, s1] of cut(0, S.h, 'W'))
+    strips.push({ id: `site.apron${++n}`, x: -out, y: s0, w: out, h: s1 - s0 });
+  for (const [s0, s1] of cut(0, S.h, 'E'))
+    strips.push({ id: `site.apron${++n}`, x: S.w, y: s0, w: out, h: s1 - s0 });
+  return strips.map(s => ({ ...s, top: ground, th }));
 }
 
 // Труба должна подняться над кровлей — СП 7.13130: ближе 1,5 м от конька
@@ -134,13 +229,34 @@ export function verandaGeom(house) {
       w: 300, h: 300
     });
   const deckBottom = v.deck - v.board - v.joist[0];         // низ лаг
+  // Ограждение — по трём свободным краям настила, разрыв под ступени
+  // у юго-западного угла, рядом с дверью из тамбура. Длина в смете и тела
+  // в выгрузке считаются с одних и тех же отрезков
+  const stepW = 1000;
+  const ground = house.site.ground ?? -300;
+  const railSegs = v.rail ? [
+    { x: v.x + v.w - 50, y: v.y, w: 50, h: v.h },                 // наружный край
+    { x: v.x, y: v.y + v.h - 50, w: v.w - 50, h: 50 },            // дальний от улицы
+    { x: v.x + stepW, y: v.y, w: v.w - stepW - 50, h: 50 }        // уличный, минус ступени
+  ] : [];
+  const deckSteps = [];
+  if (v.steps) {
+    const rise = Math.round((v.deck - ground) / v.steps);
+    for (let i = 0; i < v.steps; i++)
+      deckSteps.push({
+        x: v.x, y: v.y - 300 * (i + 1), w: stepW, h: 300,
+        top: v.deck - rise * (i + 1), rise
+      });
+  }
   return {
     v, wall, run, c, canopyRun, canopyBox, dropZ, posts, piles,
     deckArea: v.w * v.h / 1e6,
     canopyArea: Math.round(canopyRun / Math.cos(p)) * canopyBox.h / 1e6,
     canopyLen: Math.round(canopyRun / Math.cos(p)),
     joists: Math.floor(v.w / v.joistStep) + 1,
-    rail: 2 * v.h + v.w - v.steps * 1000,                   // длина ограждения, мм
+    railSegs, deckSteps, stepW,
+    railTop: v.deck + (v.rail || 0),
+    rail: railSegs.reduce((s, r) => s + Math.max(r.w, r.h), 0),   // длина ограждения, мм
     deckBottom, beamBottom: deckBottom - v.beam[0],         // низ обвязки — по ней сваи
     pileTop: deckBottom - v.beam[0],
     pileBottom: (house.site.ground ?? -300) - v.pileDepth,

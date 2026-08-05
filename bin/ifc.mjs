@@ -6,7 +6,8 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom } from '../src/roof.mjs';
+import { bill, runSegments3d } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -43,46 +44,90 @@ const rooms = house.levels.reduce((s, L) => s + L.rooms.length, 0);
 const pits = pitGeom(house);
 const V = verandaGeom(house);
 const roofOn = house.roof ? 1 : 0;
+// стены: перегородки и несущие из данных, четыре наружных на уровень,
+// три стенки приямка, два фронтона и два фризовых пояса
 const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length
-  + 3 * pits.length;
+  + 3 * pits.length + roofOn * 4;
 const opens = house.levels.reduce((s, L) => s + (L.openings || []).length + (L.windows || []).length, 0);
 const furn = house.levels.reduce((s, L) => s + (L.furniture || []).filter(f => f.hz).length, 0);
 const points = systems.reduce((s, x) => s + x.points.length, 0);
-// дырки в перекрытиях: под лестницу и под каждую шахту
+// дырки в перекрытиях: под лестницу и под каждую шахту; продух в каждом фронтоне
 const holes = house.levels.reduce((s, L, i) => s
   + (L.stair && house.levels[i + 1] ? 1 : 0) + (L.riser ? 1 : 0)
   + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length, 0);
+const vents = roofOn * 2;
 
 // перекрытия: над каждым уровнем, плита основания, настил веранды, навес,
-// два ската, дно и лоток каждого приямка, площадка каждого крыльца.
-// Считается по модели, а не по глазу
+// два ската, дно и лоток каждого приямка, площадка каждого крыльца,
+// полосы отмостки. Считается по модели, а не по глазу
 const porches = porchGeom(house);
+const apron = blindGeom(house);
 const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2
-  + 2 * pits.length + porches.length;
+  + 2 * pits.length + porches.length + apron.length;
 const flues = house.levels[house.levels.length - 1].flues || [];
 
+// трассы: сегментный элемент на каждый прогон с геометрией и на каждую
+// магистраль, плюс жёлоб и трубы водостока. Класс — по виду точки,
+// как в экспорте: воздуховоды, трубы, кабельные каналы
+const segCls = kind => kind === 'supply' || kind === 'exhaust' ? 'IFCDUCTSEGMENT'
+  : ['cold', 'hot', 'drain', 'radiator', 'convector'].includes(kind) ? 'IFCPIPESEGMENT'
+    : 'IFCCABLECARRIERSEGMENT';
+const nSeg = { IFCPIPESEGMENT: 0, IFCDUCTSEGMENT: 0, IFCCABLECARRIERSEGMENT: 0 };
+const bills = systems.map(sys => ({ sys, b: bill(house, sys) }));
+for (const { sys, b } of bills) {
+  for (const r of b.runs) if (runSegments3d(r).length) nSeg[segCls(r.points[0].kind)]++;
+  for (const t of b.trunks) nSeg[sys.id === 'vk' || sys.id === 'ov' ? 'IFCPIPESEGMENT' : 'IFCCABLECARRIERSEGMENT']++;
+}
+const gut = roofOn ? gutterGeom(house) : null;
+if (gut) nSeg.IFCPIPESEGMENT += gut.gutters.length + gut.drains.length;
+
 const want = [
-  ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes],
+  ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents],
   ['IFCFURNISHINGELEMENT', furn], ['IFCBUILDINGSTOREY', house.levels.length],
   ['IFCSYSTEM', systems.length],
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],
   ['IFCPILE', V ? V.piles.length : 0], ['IFCCOLUMN', V ? V.posts.length : 0],
-  // балки: обвязка веранды, два мауэрлата и затяжка на каждую ферму
-  ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)],
+  // балки: обвязка веранды, два мауэрлата, затяжка на каждую ферму,
+  // два снегозадержателя
+  ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)
+    + roofOn * (house.roof.snowGuard ? 2 : 0)],
   ['IFCPLATE', pits.length],
-  ['IFCSTAIRFLIGHT', porches.length]
+  ['IFCSTAIRFLIGHT', porches.length + (V && V.deckSteps.length ? 1 : 0)],
+  // ограждения: марши с решением rail и настил веранды
+  ['IFCRAILING', house.levels.reduce((s, L, i) => s
+    + (L.stair && L.stair.rail && house.levels[i + 1] ? 1 : 0), 0)
+    + (V && V.railSegs.length ? 1 : 0)],
+  ['IFCPIPESEGMENT', nSeg.IFCPIPESEGMENT],
+  ['IFCDUCTSEGMENT', nSeg.IFCDUCTSEGMENT],
+  ['IFCCABLECARRIERSEGMENT', nSeg.IFCCABLECARRIERSEGMENT]
 ];
 for (const [t, n] of want)
   if (count(t) !== n) errs.push(`${t}: ${count(t)}, в модели ${n}`);
 
 // 4. каждый проём вырезан из стены или из перекрытия, каждое заполнение
-// стоит в проёме. Дырки в перекрытиях — под лестницу и шахты
+// стоит в проёме. Дырки в перекрытиях — под лестницу и шахты, продухи —
+// во фронтонах
 const voids = count('IFCRELVOIDSELEMENT');
-if (voids !== opens + holes) errs.push(`проёмов ${opens} + ${holes} в перекрытиях, вычитаний ${voids}`);
+if (voids !== opens + holes + vents) errs.push(`проёмов ${opens} + ${holes} в перекрытиях + ${vents} продухов, вычитаний ${voids}`);
 const fills = count('IFCRELFILLSELEMENT');
 const leaves = count('IFCDOOR') + count('IFCWINDOW');
 if (fills !== leaves) errs.push(`заполнений ${leaves}, связей с проёмами ${fills}`);
+
+// 4а. У каждого заполнения есть тип (по нему ArchiCAD собирает дверь
+// в параметрический объект) и стилизованная геометрия (по ней — цвет).
+// Файл без типов и стилей открывается как серые глыбы — уже открывался
+const typedIds = new Set();
+for (const e of ents.values()) {
+  if (e.type !== 'IFCRELDEFINESBYTYPE') continue;
+  for (const r of e.args.matchAll(/#(\d+)/g)) typedIds.add(+r[1]);
+}
+for (const [n, e] of ents)
+  if ((e.type === 'IFCDOOR' || e.type === 'IFCWINDOW') && !typedIds.has(n))
+    errs.push(`${e.type} #${n} без IfcDoorType/IfcWindowType`);
+if (!count('IFCSTYLEDITEM')) errs.push('в файле нет ни одного стиля поверхности — модель приедет серой');
+if (![...ents.values()].some(e => e.type === 'IFCSURFACESTYLERENDERING' && /,0\.65,/.test(e.args)))
+  errs.push('стекло непрозрачно: нет IfcSurfaceStyleRendering с Transparency 0.65');
 
 // 5. точки разделов на месте
 const mep = ['IFCOUTLET', 'IFCLAMP', 'IFCSWITCHINGDEVICE', 'IFCVALVE', 'IFCWASTETERMINAL',
@@ -144,6 +189,17 @@ for (const L of house.levels) {
   ];
   for (const [r, key] of q) expect.set(key, [r.x + r.w / 2, S.h - (r.y + r.h / 2)]);
 }
+// продухи фронтонов: посадка идёт от начала профиля вдоль торца
+if (house.roof) {
+  const g = roofGeom(house);
+  if (g.alongY) {
+    expect.set('roof.ventS', [g.span / 2, S.h]);
+    expect.set('roof.ventN', [g.span / 2, S.wall]);
+  } else {
+    expect.set('roof.ventW', [0, g.span / 2]);
+    expect.set('roof.ventE', [S.w - S.wall, g.span / 2]);
+  }
+}
 let checked = 0;
 for (const [n, e] of ents) {
   if (e.type !== 'IFCOPENINGELEMENT') continue;
@@ -154,7 +210,7 @@ for (const [n, e] of ents) {
   const d = Math.hypot(w.x - want[0], w.y - want[1]);
   if (d > 1) errs.push(`проём ${id} стоит в ${Math.round(w.x)},${Math.round(w.y)}, по плану ${want[0]},${want[1]} — мимо на ${Math.round(d)} мм`);
 }
-if (checked !== opens + holes) errs.push(`проверено проёмов ${checked} из ${opens + holes}`);
+if (checked !== opens + holes + vents) errs.push(`проверено проёмов ${checked} из ${opens + holes + vents}`);
 
 // 7. Лестница ходится ногами. Ступени пишутся телами в одном представлении,
 // и разъехавшийся марш выглядит на списке сущностей ровно так же, как
