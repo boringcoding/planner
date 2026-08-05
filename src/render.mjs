@@ -17,6 +17,8 @@ const C = {
 
 // средняя ширина знака в долях кегля: Plex Mono моноширинный, Sans — оценка
 const ADV = { sans: 0.54, mono: 0.60 };
+import { roofGeom, roofHoles, flueTop, verandaGeom, pitGeom } from './roof.mjs';
+
 const MIN_FURN_FS = 165;   // мельче подпись мебели не рисуется — правило это ловит
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -163,7 +165,9 @@ function verandaTexts(v) {
   return [
     { t: 'Веранда', cx: v.x + v.w / 2, baseline: v.y + 1100, fs: 420, font: 'sans' },
     { t: `${fmt(v.w * v.h)} м²`, cx: v.x + v.w / 2, baseline: v.y + 1620, fs: 340, font: 'mono' },
-    { t: `${v.w} × ${v.h}`, cx: v.x + v.w / 2, baseline: v.y + v.h + 560, fs: 300, font: 'mono' }
+    // подпись габарита уходит ниже ступеней: на их месте она читалась как
+    // размер ступени, а на чертеже это две разные вещи
+    { t: `${v.w} × ${v.h}`, cx: v.x + v.w / 2, baseline: v.y + v.h + v.steps * 300 + 560, fs: 300, font: 'mono' }
   ];
 }
 
@@ -553,10 +557,20 @@ export function renderLevel(house, L, opt = {}) {
   s += `<rect x="${-g.padL}" y="${-g.padT}" width="${S.w + g.padL + g.padR}" height="${S.h + g.padT + g.padB}" fill="${C.paper}"/>`;
 
   if (L.veranda) {
-    const v = L.veranda;
-    s += `<rect x="${v.x}" y="${v.y}" width="${v.w}" height="${v.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70" stroke-dasharray="260 180"/>`;
-    for (let i = 1; i <= 4; i++) s += `<line x1="${v.x + 200}" y1="${v.y + v.h - 320 * i}" x2="${v.x + v.w - 200}" y2="${v.y + v.h - 320 * i}" stroke="${C.ink35}" stroke-width="40"/>`;
-    for (const dy of [250, v.h / 2, v.h - 250]) s += `<rect x="${v.x + v.w - 340}" y="${v.y + dy - 170}" width="340" height="340" fill="${C.ink35}"/>`;
+    const v = L.veranda, V = verandaGeom(house);
+    // настил досками поперёк, свай под ним не видно — они пунктиром
+    s += `<rect x="${v.x}" y="${v.y}" width="${v.w}" height="${v.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70"/>`;
+    for (let y = v.y + 300; y < v.y + v.h; y += 300)
+      s += `<line x1="${v.x + 120}" y1="${y}" x2="${v.x + v.w - 120}" y2="${y}" stroke="${C.ink35}" stroke-width="35"/>`;
+    for (const p of V.piles)
+      s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="none" stroke="${C.ink35}" stroke-width="45" stroke-dasharray="120 90"/>`;
+    // контур навеса: он шире настила на свес, иначе вода льётся на доски
+    const b = V.canopyBox;
+    s += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="none" stroke="${C.ink35}" stroke-width="55" stroke-dasharray="300 200"/>`;
+    for (const p of V.posts) s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${C.ink}"/>`;
+    // ступени с дальнего торца
+    for (let i = 0; i < v.steps; i++)
+      s += `<rect x="${v.x + 400}" y="${v.y + v.h + i * 300}" width="1200" height="300" fill="none" stroke="${C.ink35}" stroke-width="55"/>`;
     const vt = verandaTexts(v);
     s += t2svg(vt[0], C.ink) + t2svg(vt[1], C.ink60) + t2svg(vt[2], C.ink35);
   }
@@ -603,12 +617,17 @@ export function renderLevel(house, L, opt = {}) {
     } else if (w.kind === 'hatch') {
       // люк для дров: проём в стене штрихом, снаружи приямок с крышкой
       s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="150 120"/>`;
-      const d = 900, pit = horiz
-        ? { x: x1, y: w.side === 'S' ? -d : S.h, w: x2 - x1, h: d }
-        : { x: w.side === 'W' ? -d : S.w, y: y1, w: d, h: y2 - y1 };
-      s += `<rect x="${pit.x}" y="${pit.y}" width="${pit.w}" height="${pit.h}" fill="${C.paper}" stroke="${C.ink35}" stroke-width="70" stroke-dasharray="200 150"/>`;
-      s += `<line x1="${pit.x}" y1="${pit.y}" x2="${pit.x + pit.w}" y2="${pit.y + pit.h}" stroke="${C.ink35}" stroke-width="45"/>`;
-      s += `<line x1="${pit.x}" y1="${pit.y + pit.h}" x2="${pit.x + pit.w}" y2="${pit.y}" stroke="${C.ink35}" stroke-width="45"/>`;
+      const P = pitGeom(house).find(q => q.win === w.id);
+      if (P) {
+        const b = P.box;
+        s += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="${C.paper}" stroke="${C.ink}" stroke-width="90"/>`;
+        // решётка крышки: по ней ходят, поэтому она читается как настил, а не как яма
+        const step = 220, horizGrid = b.w > b.h;
+        for (let t = step; t < (horizGrid ? b.w : b.h); t += step)
+          s += horizGrid
+            ? `<line x1="${b.x + t}" y1="${b.y + 60}" x2="${b.x + t}" y2="${b.y + b.h - 60}" stroke="${C.ink35}" stroke-width="40"/>`
+            : `<line x1="${b.x + 60}" y1="${b.y + t}" x2="${b.x + b.w - 60}" y2="${b.y + t}" stroke="${C.ink35}" stroke-width="40"/>`;
+      }
     } else if (w.kind === 'gate') {
       s += `<line ${off(0)} stroke="${C.ink}" stroke-width="110" stroke-dasharray="420 220"/>`;
     } else {
@@ -680,6 +699,250 @@ export function renderLevel(house, L, opt = {}) {
   s += t2svg({ t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 }, C.ink35);
   s += `</svg>`;
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// план кровли
+//
+// Лист отвечает на три вопроса: куда течёт вода, где кровлю протыкают трубы
+// и из чего она собрана. Ничего из этого нельзя увидеть на планах этажей:
+// там кровля — пустое место над последним потолком.
+//
+// Отметки берутся из roof.mjs, а не пишутся в чертёж руками: поменялся уклон —
+// поехали и конёк, и карниз, и высота каждой трубы, и подписи под ними.
+// ---------------------------------------------------------------------------
+
+const mark = z => (z < 0 ? '−' : '+') + (Math.abs(z) / 1000).toFixed(3).replace('.', ',');
+
+export function roofSheet(house) {
+  const g = roofGeom(house), V = verandaGeom(house);
+  const b = V && V.canopyBox;
+  const ex = g.out.x + g.out.w, ey = g.out.y + g.out.h;
+  return {
+    g, V, x0: g.out.x, y0: g.out.y,
+    x1: b ? Math.max(ex, b.x + b.w) : ex,
+    y1: b ? Math.max(ey, b.y + b.h) : ey,
+    padL: 3900, padT: 2900, padB: 7700, padR: 1700
+  };
+}
+
+// состав кровли словами: сечения и шаги живут в данных, поэтому примечание
+// не может разойтись со сметой и с выгрузкой
+const roofNotes = (R, g) => [
+  `покрытие — ${R.cover}`,
+  `стропила ${R.rafter[0]}×${R.rafter[1]} с шагом ${R.rafterStep}, прогон ${R.purlin[0]}×${R.purlin[1]} по стойкам ${R.post[0]}×${R.post[1]}`,
+  `обрешётка ${R.batten[0]}×${R.batten[1]} с шагом ${R.battenStep} по контробрешётке ${R.counter[0]}×${R.counter[1]}`,
+  `мауэрлат ${R.mauerlat[0]}×${R.mauerlat[1]} по армопоясу, отметка ${mark(R.base)}`,
+  `чердачное перекрытие — балки ${R.atticBeam[0]}×${R.atticBeam[1]} с шагом ${R.atticStep}, утепление ${R.insulation}`,
+  `водосток — жёлоб ø${R.gutter} по карнизу${R.snowGuard ? ', снегозадержание' : ''}`,
+  `водосточных труб ${g.drains} × ø${R.downpipe || 100}, длина ${(g.drainLen / 1000).toFixed(1).replace('.', ',')} м`,
+  `чердак холодный, продух ${R.vent} в каждом фронтоне`
+];
+
+// стрелки уклона: от конька к карнизу, по одной на скат
+function slopeArrows(house) {
+  const g = roofGeom(house), o = g.out;
+  if (g.alongY) {
+    const y = Math.round(o.y + o.h * 0.22);
+    return [
+      { x1: g.ridge.x1, y1: y, x2: o.x + 200, y2: y },
+      { x1: g.ridge.x1, y1: y, x2: o.x + o.w - 200, y2: y }
+    ];
+  }
+  const x = Math.round(o.x + o.w * 0.22);
+  return [
+    { x1: x, y1: g.ridge.y1, x2: x, y2: o.y + 200 },
+    { x1: x, y1: g.ridge.y1, x2: x, y2: o.y + o.h - 200 }
+  ];
+}
+
+// все подписи листа кровли одним списком — рисуются и проверяются из него же
+export function roofTexts(house) {
+  const q = roofSheet(house), g = q.g, R = house.roof, o = g.out, out = [];
+  const add = (kind, owner, d) => out.push({ kind, owner, d });
+
+  add('roof', 'конёк', g.alongY
+    ? { t: `конёк ${mark(g.ridgeZ)}`, cx: (g.ridge.x1 + g.ridge.x2) / 2, baseline: o.y + 900, fs: 300, font: 'mono' }
+    : { t: `конёк ${mark(g.ridgeZ)}`, cx: o.x + 2600, baseline: (g.ridge.y1 + g.ridge.y2) / 2 - 160, fs: 300, font: 'mono' });
+
+  for (const [i, a] of slopeArrows(house).entries())
+    add('roof', `уклон ската ${i + 1}`, {
+      t: `i = ${R.pitch}°`, cx: (a.x1 + a.x2) / 2,
+      baseline: (a.y1 + a.y2) / 2 - (g.alongY ? 160 : 0), fs: 280, font: 'mono',
+      ...(g.alongY ? {} : { rot: -1 })
+    });
+
+  const eaveT = `карниз ${mark(g.eaveZ)}`;
+  if (g.alongY) {
+    add('roof', 'карниз СЗ', { t: eaveT, cx: o.x + 1700, baseline: o.y + o.h * 0.78, fs: 260, font: 'mono' });
+    add('roof', 'карниз ЮВ', { t: eaveT, cx: o.x + o.w - 1700, baseline: o.y + o.h * 0.78, fs: 260, font: 'mono' });
+  } else {
+    add('roof', 'карниз ЮЗ', { t: eaveT, cx: o.x + o.w * 0.78, baseline: o.y + 700, fs: 260, font: 'mono' });
+    add('roof', 'карниз СВ', { t: eaveT, cx: o.x + o.w * 0.78, baseline: o.y + o.h - 500, fs: 260, font: 'mono' });
+  }
+
+  // труба на плане — квадратик, и без отметки верха по нему ничего не заказать
+  for (const h of roofHoles(house)) {
+    const cx = h.x + h.w / 2, cy = h.y + h.h / 2;
+    const side = cx < (o.x + o.w / 2) ? 1 : -1;
+    const lx = cx + side * 1300;
+    const src = house.levels[house.levels.length - 1];
+    const f = (src.flues || []).concat(src.ducts || []).find(e => e.id.endsWith(h.id.split('.')[1]));
+    add('hole', h.id, { t: `${h.kind} ${h.id.split('.')[1]}`, cx: lx, baseline: cy - 60, fs: 240, font: 'mono' });
+    add('hole', h.id + ' верх', { t: `верх ${mark(flueTop(house, f))}`, cx: lx, baseline: cy + 300, fs: 240, font: 'mono' });
+  }
+
+  if (q.V) {
+    const v = q.V.v;
+    add('veranda', 'навес', { t: 'навес веранды', cx: v.x + v.w / 2, baseline: v.y + v.h / 2 - 60, fs: 300, font: 'sans' });
+    add('veranda', 'уклон навеса', { t: `i = ${v.pitch}°, низ ${mark(q.V.dropZ)}`, cx: v.x + v.w / 2, baseline: v.y + v.h / 2 + 400, fs: 240, font: 'mono' });
+  }
+
+  for (const d of chainTexts('x', q.y1 + 950, [o.x, 0, house.shell.w, o.x + o.w])) add('dim', 'свесы X', d);
+  for (const d of chainTexts('x', q.y1 + 1850, [o.x, o.x + o.w])) add('dim', 'габарит X', d);
+  for (const d of chainTexts('y', q.x0 - 1250, [o.y, 0, house.shell.h, o.y + o.h])) add('dim', 'свесы Y', d);
+  for (const d of chainTexts('y', q.x0 - 2150, [o.y, o.y + o.h])) add('dim', 'габарит Y', d);
+
+  const sides = house.site.sides;
+  add('side', 'ЮЗ', { t: sides.S, cx: (q.x0 + q.x1) / 2, baseline: q.y0 - 700, fs: 400, font: 'mono', ls: 120 });
+  add('side', 'СВ', { t: sides.N, cx: (q.x0 + q.x1) / 2, baseline: q.y1 + 2420, fs: 340, font: 'mono', ls: 120 });
+  add('side', 'СЗ', { t: sides.W, cx: q.x0 - 2900, baseline: (q.y0 + q.y1) / 2, fs: 340, font: 'mono', ls: 80, rot: -1 });
+  add('side', 'ЮВ', { t: sides.E, cx: q.x1 + 800, baseline: (q.y0 + q.y1) / 2, fs: 340, font: 'mono', ls: 80, rot: 1 });
+  return out;
+}
+
+// подписи, выключенные влево: штамп сверху и примечания снизу
+export function roofLeftTexts(house) {
+  const q = roofSheet(house), R = house.roof, g = q.g;
+  const out = [
+    { kind: 'stamp', owner: 'заголовок', d: { t: `${house.project.title} · Кровля`, cx: q.x0, baseline: q.y0 - 2150, fs: 420, font: 'sans' } },
+    { kind: 'stamp', owner: 'тип', d: { t: `${R.type === 'gable' ? 'двускатная' : R.type} ${R.pitch}°, конёк вдоль дома, чердак холодный`, cx: q.x0, baseline: q.y0 - 1700, fs: 260, font: 'mono' } },
+    { kind: 'stamp', owner: 'единицы', d: { t: 'размеры в миллиметрах, отметки в метрах', cx: q.x0, baseline: q.y0 - 1300, fs: 240, font: 'mono' } },
+    { kind: 'note', owner: 'площади', d: { t: `скаты ${g.area.toFixed(1).replace('.', ',')} м², в плане ${g.plan.toFixed(1).replace('.', ',')} м², стропильных ног ${g.rafters}`, cx: q.x0, baseline: q.y1 + 3350, fs: 220, font: 'mono' } }
+  ];
+  roofNotes(R, g).forEach((t, i) =>
+    out.push({ kind: 'note', owner: t.slice(0, 24), d: { t: `— ${t}`, cx: q.x0, baseline: q.y1 + 3950 + i * 420, fs: 200, font: 'mono' } }));
+  return out;
+}
+
+// рамки подписей листа кровли — тем же способом, что и на планах этажей
+export function roofLabelBoxes(house) {
+  const out = roofTexts(house).map(e => ({ kind: e.kind, owner: e.owner, ...textBox(e.d) }));
+  for (const e of roofLeftTexts(house)) {
+    const b = textBox(e.d);
+    out.push({ kind: e.kind, owner: e.owner, x: e.d.cx, y: b.y, w: b.w, h: b.h });
+  }
+  return out;
+}
+
+export function renderRoof(house) {
+  const q = roofSheet(house), g = q.g, R = house.roof, S = house.shell, o = g.out;
+  const W = q.x1 - q.x0 + q.padL + q.padR, H = q.y1 - q.y0 + q.padT + q.padB;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${q.x0 - q.padL} ${q.y0 - q.padT} ${W} ${H}" font-family="IBM Plex Sans,system-ui,sans-serif">`;
+  s += `<rect x="${q.x0 - q.padL}" y="${q.y0 - q.padT}" width="${W}" height="${H}" fill="${C.paper}"/>`;
+
+  // навес веранды — свой скат, ниже основного: рисуется первым и уходит под него
+  if (q.V) {
+    const b = q.V.canopyBox, my = b.y + b.h / 2;
+    s += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="${C.room}" stroke="${C.ink35}" stroke-width="55" stroke-dasharray="300 200"/>`;
+    s += arrow(b.x + 200, my - 900, b.x + b.w - 200, my - 900);
+  }
+
+  // скаты: разной светлоты, иначе двускатная и вальмовая на плане одинаковы
+  s += `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="${C.room}"/>`;
+  if (g.alongY)
+    s += `<rect x="${o.x}" y="${o.y}" width="${g.ridge.x1 - o.x}" height="${o.h}" fill="${C.garage}"/>`;
+  else
+    s += `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h / 2}" fill="${C.garage}"/>`;
+
+  // жёлоб висит снаружи края ската, водосточные трубы — по концам жёлоба
+  const eaves = g.alongY
+    ? [{ x: o.x, y: o.y, horiz: false, n: 1 }, { x: o.x + o.w, y: o.y, horiz: false, n: -1 }]
+    : [{ x: o.x, y: o.y, horiz: true, n: 1 }, { x: o.x, y: o.y + o.h, horiz: true, n: -1 }];
+  const half = R.gutter / 2, dr = R.gutter * 0.7;
+  for (const e of eaves) {
+    const ends = g.alongY ? [o.y + 700, o.y + o.h - 700] : [o.x + 700, o.x + o.w - 700];
+    if (e.horiz) {
+      const y = e.y - e.n * half;
+      s += `<line x1="${o.x}" y1="${y}" x2="${o.x + o.w}" y2="${y}" stroke="${C.ink60}" stroke-width="${R.gutter}"/>`;
+      for (const x of ends) s += `<circle cx="${x}" cy="${y}" r="${dr}" fill="${C.paper}" stroke="${C.ink}" stroke-width="50"/>`;
+    } else {
+      const x = e.x - e.n * half;
+      s += `<line x1="${x}" y1="${o.y}" x2="${x}" y2="${o.y + o.h}" stroke="${C.ink60}" stroke-width="${R.gutter}"/>`;
+      for (const y of ends) s += `<circle cx="${x}" cy="${y}" r="${dr}" fill="${C.paper}" stroke="${C.ink}" stroke-width="50"/>`;
+    }
+  }
+
+  s += `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="none" stroke="${C.ink}" stroke-width="70"/>`;
+
+  // коробка дома под кровлей — пунктиром: по ней читается вылет свеса
+  s += `<rect x="0" y="0" width="${S.w}" height="${S.h}" fill="none" stroke="${C.ink35}" stroke-width="55" stroke-dasharray="260 180"/>`;
+
+  // снегозадержание — гребёнка над карнизом: от пунктира коробки её надо
+  // отличать на глаз, иначе на листе просто четыре штриховые линии
+  if (R.snowGuard) for (const e of eaves) {
+    const off = 900 * e.n, tk = 200;
+    if (e.horiz) {
+      const y = e.y + off;
+      s += `<line x1="${o.x + 400}" y1="${y}" x2="${o.x + o.w - 400}" y2="${y}" stroke="${C.ink}" stroke-width="50"/>`;
+      for (let x = o.x + 400; x <= o.x + o.w - 400; x += 500)
+        s += `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - e.n * tk}" stroke="${C.ink}" stroke-width="50"/>`;
+    } else {
+      const x = e.x + off;
+      s += `<line x1="${x}" y1="${o.y + 400}" x2="${x}" y2="${o.y + o.h - 400}" stroke="${C.ink}" stroke-width="50"/>`;
+      for (let y = o.y + 400; y <= o.y + o.h - 400; y += 500)
+        s += `<line x1="${x}" y1="${y}" x2="${x - e.n * tk}" y2="${y}" stroke="${C.ink}" stroke-width="50"/>`;
+    }
+  }
+
+  // конёк
+  s += `<line x1="${g.ridge.x1}" y1="${g.ridge.y1}" x2="${g.ridge.x2}" y2="${g.ridge.y2}" stroke="${C.ink}" stroke-width="110"/>`;
+  // продухи в обоих фронтонах — чердак холодный, ему нужен сквозняк
+  for (const t of [0, 1]) {
+    const [vx, vy] = g.alongY
+      ? [g.ridge.x1 - R.vent / 2, t ? o.y + o.h - 460 : o.y + 160]
+      : [t ? o.x + o.w - 460 : o.x + 160, g.ridge.y1 - R.vent / 2];
+    s += `<rect x="${vx}" y="${vy}" width="${g.alongY ? R.vent : 300}" height="${g.alongY ? 300 : R.vent}" fill="none" stroke="${C.ink}" stroke-width="50"/>`;
+  }
+  for (const a of slopeArrows(house)) s += arrow(a.x1, a.y1, a.x2, a.y2);
+
+  // проходы труб: то, ради чего лист и нужен подрядчику
+  for (const h of roofHoles(house)) {
+    const hx = h.x + h.w / 2, hy = h.y + h.h / 2;
+    const side = hx < (o.x + o.w / 2) ? 1 : -1;
+    // выноска: без неё подпись висит рядом с квадратом и не привязана к нему
+    s += `<line x1="${hx + side * h.w / 2}" y1="${hy}" x2="${hx + side * 700}" y2="${hy}" stroke="${C.ink60}" stroke-width="45"/>`;
+    s += `<rect x="${h.x}" y="${h.y}" width="${h.w}" height="${h.h}" fill="${C.paper}" stroke="${C.ink}" stroke-width="70"/>`;
+    s += `<line x1="${h.x}" y1="${h.y}" x2="${h.x + h.w}" y2="${h.y + h.h}" stroke="${C.ink}" stroke-width="45"/>`;
+    s += `<line x1="${h.x + h.w}" y1="${h.y}" x2="${h.x}" y2="${h.y + h.h}" stroke="${C.ink}" stroke-width="45"/>`;
+  }
+
+  s += chain('x', q.y1 + 950, [o.x, 0, S.w, o.x + o.w]);
+  s += chain('x', q.y1 + 1850, [o.x, o.x + o.w]);
+  s += chain('y', q.x0 - 1250, [o.y, 0, S.h, o.y + o.h]);
+  s += chain('y', q.x0 - 2150, [o.y, o.y + o.h]);
+
+  for (const e of roofTexts(house)) {
+    if (e.kind === 'dim') continue;                     // цепочки нарисованы вместе с размерами
+    const c = e.kind === 'side' ? C.ink35 : e.kind === 'hole' ? C.ink : C.ink;
+    s += t2svg(e.d, e.kind === 'side' && e.owner !== 'ЮЗ' ? C.ink35 : c, halo(C.room, 200));
+  }
+  for (const e of roofLeftTexts(house))
+    s += t2svg(e.d, e.d.fs > 300 ? C.ink : C.ink60).replace('text-anchor="middle"', 'text-anchor="start"');
+
+  s += scaleBar(q.x1 - 3600, q.y1 + 2900);
+  s += compass(q.x1 + 1100, q.y0 - 900, house.site.frontAzimuth);
+  s += `</svg>`;
+  return s;
+}
+
+// стрелка уклона: линия с наконечником на карнизном конце
+function arrow(x1, y1, x2, y2) {
+  const a = Math.atan2(y2 - y1, x2 - x1), h = 320, w = 0.34;
+  const p = (t) => `${Math.round(x2 - h * Math.cos(a + t))} ${Math.round(y2 - h * Math.sin(a + t))}`;
+  return `<line x1="${Math.round(x1)}" y1="${Math.round(y1)}" x2="${Math.round(x2)}" y2="${Math.round(y2)}" stroke="${C.ink60}" stroke-width="55"/>`
+    + `<circle cx="${Math.round(x1)}" cy="${Math.round(y1)}" r="90" fill="${C.ink60}"/>`
+    + `<path d="M${p(-w)} L${Math.round(x2)} ${Math.round(y2)} L${p(w)}" fill="none" stroke="${C.ink60}" stroke-width="55"/>`;
 }
 
 // ---------------------------------------------------------------------------

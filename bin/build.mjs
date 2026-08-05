@@ -1,7 +1,8 @@
 // Сборка всех листов в out/: планы уровней, планы по разделам, развёртки.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, explication } from '../src/render.mjs';
+import { renderLevel, renderSystem, renderRoof, explication } from '../src/render.mjs';
+import { roofGeom, verandaGeom } from '../src/roof.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 
@@ -16,6 +17,17 @@ for (const L of house.levels) {
   console.log(`${L.title}:`);
   for (const r of e.rows) console.log(`  ${String(r.n).padStart(2)}. ${r.name.padEnd(30)} ${r.area.toFixed(1)} м²`);
   console.log(`      ${'итого полезной'.padEnd(30)} ${e.total.toFixed(1)} м²\n`);
+}
+
+fs.writeFileSync('out/roof.svg', renderRoof(house));
+{
+  const g = roofGeom(house), V = verandaGeom(house);
+  console.log('Кровля:');
+  console.log(`  ${'скаты'.padEnd(30)} ${g.area.toFixed(1)} м²`);
+  console.log(`  ${'чердачное перекрытие'.padEnd(30)} ${g.attic.toFixed(1)} м²`);
+  console.log(`  ${'конёк / карниз'.padEnd(30)} ${(g.ridgeZ / 1000).toFixed(3)} / ${(g.eaveZ / 1000).toFixed(3)}`);
+  if (V) console.log(`  ${'веранда: настил / навес'.padEnd(30)} ${V.deckArea.toFixed(1)} / ${V.canopyArea.toFixed(1)} м²`);
+  console.log('');
 }
 
 for (const sys of systems) {
@@ -33,4 +45,4 @@ for (const L of house.levels)
     fs.writeFileSync(`out/elev-${r.id}.svg`, renderElevation(house, L, r, systems));
     n++;
   }
-console.log(`SVG -> out/ · ${house.levels.length} планов, ${systems.length * house.levels.length} по разделам, ${n} развёрток`);
+console.log(`SVG -> out/ · ${house.levels.length} планов, план кровли, ${systems.length * house.levels.length} по разделам, ${n} развёрток`);

@@ -6,6 +6,7 @@
 // не видно границы, всегда «дешевле» настоящей.
 
 import { bill } from './systems.mjs';
+import { roofGeom, verandaGeom, pitGeom, flueTop } from './roof.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
 const mm = v => v / 1000;                      // мм -> м
@@ -76,18 +77,27 @@ export function quantities(house, systems) {
   q.rebarFloor = q.slabFloor * 0.12;
 
   // ---- деревянное перекрытие и кровля -------------------------------------
-  const slope = 30 * Math.PI / 180, over = 0.5;
-  q.roofPlan = (W + 2 * over) * (H + 2 * over);
-  q.roof = q.roofPlan / Math.cos(slope);
-  q.atticFloor = q.footprint - stairHole(second.stair);
-  q.timber = q.atticFloor * (0.2 * 0.1 / 0.6 + 0.025)      // балки 200×100 и подшивка
-    + q.roof * (0.05 * 0.2 / 0.6 + 0.025 * 0.1 / 0.35 + 0.05 * 0.05 / 0.6)
-    + q.perimAxis * 0.15 * 0.15 + 12 * 0.15 * 0.15 * 2.5;  // мауэрлат, прогон, стойки
-  q.gutter = q.perimOuter + 6;
+  // Раньше уклон и свес стояли здесь числами — 30° и 500, — и смета не знала,
+  // что в модели их поменяли. Теперь всё берётся из roof.mjs: правка данных
+  // пересчитывает и чертёж, и выгрузку, и деньги
+  const R = house.roof, g = roofGeom(house);
+  const sect = (a, step) => mm(a[0]) * mm(a[1]) / mm(step);   // м³ бруса на м² ската
+  q.roofPlan = g.plan;
+  q.roof = g.area;
+  q.atticFloor = g.attic - stairHole(second.stair);
+  const ridgePosts = Math.ceil(mm(g.len) / 2.5) + 1;
+  q.timber = q.atticFloor * (sect(R.atticBeam, R.atticStep) + 0.025)   // балки и подшивка
+    + q.roof * (sect(R.rafter, R.rafterStep) + sect(R.batten, R.battenStep) + sect(R.counter, R.rafterStep))
+    + q.perimAxis * mm(R.mauerlat[0]) * mm(R.mauerlat[1])              // мауэрлат
+    + mm(g.len) * mm(R.purlin[0]) * mm(R.purlin[1])                    // коньковый прогон
+    + ridgePosts * mm(R.post[0]) * mm(R.post[1]) * mm(g.rise);         // стойки под прогон
+  q.gutter = mm(g.gutterLen + g.drainLen);
+  q.snowGuard = R.snowGuard ? mm(g.gutterLen) : 0;
   q.woolRoof = q.atticFloor;
 
   // ---- фасад ---------------------------------------------------------------
-  const gable = W * (W / 2 * Math.tan(slope)) / 2 * 2;
+  // фронтон — треугольник в полный пролёт, и его высота теперь тоже из модели
+  const gable = mm(g.span) * mm(g.rise);                     // два фронтона
   q.facade = q.perimOuter * (mm(first.floorToFloor + second.floorToFloor) + 0.4) + gable
     - q.openFirst - q.openSecond;
 
@@ -129,10 +139,12 @@ export function quantities(house, systems) {
   q.steps = stairs.reduce((s, L) => s + L.stair.risers, 0);
   q.railing = stairs.reduce((s, L) => s + 2 * mm(L.stair.w - L.stair.landing) + mm(L.stair.h), 0);
   q.blind = q.perimOuter + 8;
-  const ver = house.levels.map(L => L.veranda).find(Boolean);
-  q.veranda = ver ? mm(ver.w) * mm(ver.h) : 0;
-  q.verandaRoof = q.veranda / Math.cos(slope);
-  q.verandaRail = ver ? mm(ver.h) * 2 + mm(ver.w) : 0;
+  const V = verandaGeom(house);
+  q.veranda = V ? V.deckArea : 0;
+  q.verandaRoof = V ? V.canopyArea : 0;                      // навес шире настила на свес
+  q.verandaRail = V ? mm(V.rail) : 0;
+  // приямок люка для дров: коробка со стенками, дном и решёткой
+  q.pits = pitGeom(house).length;
 
   // ---- инженерия из собственных ведомостей --------------------------------
   q.sys = {};
@@ -144,10 +156,15 @@ export function quantities(house, systems) {
       dev: Object.fromEntries(b.devices.map(d => [d.kind, d.n]))
     };
   }
-  q.flue = house.levels.length * mm(house.levels[0].floorToFloor) + 3;
   // оборудование, которое уже стоит в модели предметом
   q.saunaStove = house.levels.reduce((s, L) =>
     s + (L.furniture || []).filter(f => f.sym === 'heaterSauna').length, 0);
+  // Дымоход считается от прибора в цоколе до расчётной отметки над кровлей —
+  // её же считает flueTop, и она же подписана на плане кровли. Труба печи
+  // сауны сюда не попадает: она входит в цену самой печи
+  const flues = house.levels[house.levels.length - 1].flues || [];
+  q.flue = flues.slice(0, Math.max(0, flues.length - q.saunaStove)).reduce(
+    (s, f) => s + mm(flueTop(house, f) - cokol.base), 0);
   return q;
 }
 
@@ -187,7 +204,8 @@ export function estimate(house, systems, prices) {
   add('Крыша', [
     ['timber', q.timber], ['workTimber', q.atticFloor + q.roof],
     ['roofing', q.roof], ['workRoof', q.roof],
-    ['woolRoof', q.woolRoof], ['gutter', q.gutter], ['flue', q.flue]
+    ['woolRoof', q.woolRoof], ['gutter', q.gutter], ['snowGuard', q.snowGuard],
+    ['flue', q.flue]
   ]);
 
   add('Фасад и утепление', [
@@ -216,7 +234,8 @@ export function estimate(house, systems, prices) {
   add('Лестницы, крыльцо, веранда, отмостка', [
     ['stairConcrete', q.stairConcrete], ['stepFinish', q.steps], ['railing', q.railing],
     ['blind', q.blind], ['porch', 1],
-    ['verandaDeck', q.veranda], ['verandaRoof', q.verandaRoof], ['verandaRail', q.verandaRail]
+    ['verandaDeck', q.veranda], ['verandaRoof', q.verandaRoof], ['verandaRail', q.verandaRail],
+    ['pit', q.pits]
   ]);
 
   add('Отделка', [

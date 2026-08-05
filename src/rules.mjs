@@ -1,7 +1,8 @@
 // Правила проверки планировки. Каждый найденный дефект добавляется сюда,
 // а не чинится единичной правкой координаты.
 
-import { labelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
+import { labelBoxes, roofLabelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
+import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom } from './roof.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -33,6 +34,11 @@ export const LIMITS = {
   sillPano: 700,           // подоконник ниже — окно панорамное и помечается
   sillWet: 1400,           // подоконник в мокром помещении: не ниже, иначе видно с улицы
   sillHatch: 1200,         // люк в цоколь — под потолком, а не у пола
+  roofPitch: [14, 45],     // уклон кровли: ниже 14 фальц течёт, выше 45 парусит
+  roofEave: [400, 1000],   // карнизный свес
+  flueOverRoof: 2000,      // выше — труба просит растяжек, а не «так сойдёт»
+  canopyClear: 2200,       // низ навеса веранды над настилом
+  pitToDoor: 800,          // от края приямка до наружной двери на той же стене
   body: 550,               // ширина тела, которым проверяется проходимость пола
   nook: 0.5e6              // клочок свободного пола мельче — щель, а не проход
 };
@@ -621,6 +627,89 @@ export function check(house, brief) {
       for (let j = i + 1; j < boxes.length; j++)
         if (overlap(shrink(boxes[i], LIMITS.labelClear), shrink(boxes[j], LIMITS.labelClear)) > 0)
           E(L, `подписи наезжают: ${boxes[i].kind} «${boxes[i].owner}» и ${boxes[j].kind} «${boxes[j].owner}»`);
+  }
+
+  // 29. кровля. Её не было вовсе, и это было видно только в тексте:
+  // «чего в выгрузке нет и не появится само». Теперь она есть, а значит
+  // и проверяется — уклон, свес, трубы над скатом, отступ от границы
+  if (!house.roof) errs.push('кровли в модели нет');
+  else {
+    const R = house.roof, g = roofGeom(house);
+    if (R.pitch < LIMITS.roofPitch[0] || R.pitch > LIMITS.roofPitch[1])
+      errs.push(`уклон кровли ${R.pitch}°, норма ${LIMITS.roofPitch.join('…')}`);
+    if (R.eave < LIMITS.roofEave[0] || R.eave > LIMITS.roofEave[1])
+      errs.push(`карнизный свес ${R.eave}, норма ${LIMITS.roofEave.join('…')}`);
+    if (R.base < S.h * 0 + house.levels[house.levels.length - 1].base + house.levels[house.levels.length - 1].clear)
+      errs.push(`мауэрлат на ${R.base} ниже потолка верхнего этажа`);
+    const setback = (house.project && house.project.plot && house.project.plot.setback) || 0;
+    if (setback && R.eave > setback / 3)
+      errs.push(`свес ${R.eave} съедает больше трети отступа ${setback} до границы`);
+    // труба, поднятая над скатом слишком высоко, — это растяжки и парусность.
+    // Ловится именно приставная труба у карниза: чем дальше от конька, тем выше
+    for (const f of (house.levels[house.levels.length - 1].flues || [])) {
+      const over = flueTop(house, f) - Math.round(g.zAt(f.x + f.w / 2, f.y + f.h / 2));
+      if (over > LIMITS.flueOverRoof)
+        errs.push(`дымоход ${f.id} поднимается на ${over} мм над скатом, предел ${LIMITS.flueOverRoof}`);
+    }
+    // всё, что торчит сквозь кровлю, обязано быть внутри её контура:
+    // труба за краем свеса — это отдельно стоящая труба, а не проход
+    const holes = roofHoles(house);
+    const shafts = [...(house.levels[house.levels.length - 1].flues || []),
+    ...(house.levels[house.levels.length - 1].ducts || [])];
+    for (const q of shafts)
+      if (!holes.some(h => h.x === q.x && h.y === q.y))
+        errs.push(`шахта ${q.id} стоит вне контура кровли — она ничем не накрыта`);
+    // снегозадержание там, где под карнизом ходят: вход, дверь гаража, люк
+    const underEave = house.levels.flatMap(L => (L.windows || [])
+      .filter(w => w.kind === 'entrance' || w.kind === 'door' || w.kind === 'hatch')
+      .filter(w => (w.side === 'W' || w.side === 'E') === g.alongY));
+    if (underEave.length && !R.snowGuard)
+      errs.push(`под карнизом ${underEave.length} проёмов, а снегозадержания нет`);
+  }
+
+  // 30. веранда — конструкция, а не пунктир: настил ниже порога, под навесом
+  // можно пройти, навес не режет окна этажа выше
+  const V = verandaGeom(house);
+  if (V) {
+    const { v } = V;
+    if (v.deck >= 0) errs.push(`настил веранды на ${v.deck} — вода пойдёт в дом`);
+    if (V.clear < LIMITS.canopyClear)
+      errs.push(`под навесом веранды ${V.clear} мм, нужно ${LIMITS.canopyClear}`);
+    const upper = house.levels[house.levels.length - 1];
+    for (const w of upper.windows || []) {
+      if (w.kind || w.side !== V.wall) continue;
+      const overlap = Math.min(w.b, v.y + v.h) - Math.max(w.a, v.y);
+      if (overlap <= 0) continue;
+      const sillZ = upper.base + (w.sill || 0);
+      if (v.attach > sillZ)
+        errs.push(`навес веранды на ${v.attach} режет окно ${w.id}: подоконник ${sillZ}`);
+    }
+  }
+
+  // 31. приямок люка: яма у стены не должна оказаться под дверью — из двери
+  // выходят на землю, а не в яму. Ровно этот дефект и был на западном фасаде
+  for (const p of pitGeom(house)) {
+    const band = p.side === 'W' || p.side === 'E' ? [p.box.y, p.box.y + p.box.h] : [p.box.x, p.box.x + p.box.w];
+    for (const L of house.levels)
+      for (const w of L.windows || []) {
+        if (w.kind !== 'door' && w.kind !== 'entrance') continue;
+        if (w.side !== p.side) continue;
+        const gap = Math.max(band[0] - w.b, w.a - band[1]);
+        if (gap < LIMITS.pitToDoor)
+          errs.push(`приямок ${p.id} в ${Math.max(0, Math.round(gap))} мм от двери ${w.id} — выход из неё в яму`);
+      }
+    if (p.floor >= p.top) errs.push(`дно приямка ${p.id} на ${p.floor} не ниже земли ${p.top}`);
+  }
+
+  // 32. лист кровли раскладывается теми же рамками, что и планы этажей,
+  // и проверяется так же. Подписей на нём мало, но они привязаны к отметкам:
+  // стоит поднять уклон — и «конёк +8,809» уезжает в стрелку уклона
+  if (house.roof) {
+    const rb = roofLabelBoxes(house);
+    for (let i = 0; i < rb.length; i++)
+      for (let j = i + 1; j < rb.length; j++)
+        if (overlap(shrink(rb[i], LIMITS.labelClear), shrink(rb[j], LIMITS.labelClear)) > 0)
+          errs.push(`кровля: подписи наезжают: ${rb[i].kind} «${rb[i].owner}» и ${rb[j].kind} «${rb[j].owner}»`);
   }
 
   // 14. мокрые помещения строго друг над другом

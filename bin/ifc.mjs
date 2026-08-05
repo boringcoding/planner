@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
+import { roofGeom, verandaGeom, pitGeom, flueTop } from '../src/roof.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -38,7 +39,12 @@ if (new Set(guids).size !== guids.length) errs.push('GlobalId повторяет
 
 // 3. количества совпадают с моделью
 const rooms = house.levels.reduce((s, L) => s + L.rooms.length, 0);
-const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length;
+// приямок люка — три бетонные стенки на каждый люк
+const pits = pitGeom(house);
+const V = verandaGeom(house);
+const roofOn = house.roof ? 1 : 0;
+const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length
+  + 3 * pits.length;
 const opens = house.levels.reduce((s, L) => s + (L.openings || []).length + (L.windows || []).length, 0);
 const furn = house.levels.reduce((s, L) => s + (L.furniture || []).filter(f => f.hz).length, 0);
 const points = systems.reduce((s, x) => s + x.points.length, 0);
@@ -47,10 +53,19 @@ const holes = house.levels.reduce((s, L, i) => s
   + (L.stair && house.levels[i + 1] ? 1 : 0) + (L.riser ? 1 : 0)
   + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length, 0);
 
+// перекрытия: над каждым уровнем, плита основания, настил веранды, навес,
+// два ската и дно каждого приямка. Считается по модели, а не по глазу
+const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2 + pits.length;
+const flues = house.levels[house.levels.length - 1].flues || [];
+
 const want = [
   ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes],
   ['IFCFURNISHINGELEMENT', furn], ['IFCBUILDINGSTOREY', house.levels.length],
-  ['IFCSYSTEM', systems.length]
+  ['IFCSYSTEM', systems.length],
+  ['IFCROOF', roofOn], ['IFCSLAB', slabs],
+  ['IFCCHIMNEY', roofOn * flues.length],
+  ['IFCPILE', V ? V.piles.length : 0], ['IFCCOLUMN', V ? V.posts.length : 0],
+  ['IFCBEAM', (V ? 2 : 0) + roofOn * 3], ['IFCPLATE', pits.length]
 ];
 for (const [t, n] of want)
   if (count(t) !== n) errs.push(`${t}: ${count(t)}, в модели ${n}`);
@@ -195,6 +210,83 @@ for (const [n, e] of ents) {
   }
   if (turns !== 1) errs.push(`лестница ${id}: поворотов ${turns}, а марша два`);
 }
+// 8. Скат кровли посажен наклонной осью, и «уклон в свойствах» этого не
+// заменит. Отметки конька и карниза считаются вторым путём — разворотом
+// посадки обратно в мир — и сверяются с roofGeom. Ошибка в знаке нормали
+// кладёт скат зеркально, и на списке сущностей это выглядит правильно
+if (house.roof) {
+  const g = roofGeom(house);
+  const zAxis = ref => {
+    let z = 0, axis = [0, 0, 1], cur = ref;
+    while (cur && cur !== '$') {
+      const p = arg(ent(cur).args), a = arg(ent(p[1]).args);
+      z += arg(ent(a[0]).args.slice(1, -1)).map(Number)[2] || 0;
+      if (a[1] !== '$') {
+        const d = arg(ent(a[1]).args.slice(1, -1)).map(Number);
+        if (d.length === 3 && (d[0] || d[1])) axis = d;
+      }
+      cur = p[0];
+    }
+    return { z, axis };
+  };
+  const vec = ref => arg(ent(ref).args.slice(1, -1)).map(Number);
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  // где кровля стоит по плану: X при коньке вдоль Y, отражённый Y при коньке вдоль X
+  const o = g.out;
+  const ridgePos = g.alongY ? g.ridge.x1 : S.h - g.ridge.y1;
+  const eavePos = g.alongY
+    ? { 1: o.x, 2: o.x + o.w } : { 1: S.h - o.y, 2: S.h - (o.y + o.h) };
+  let slopes = 0;
+  for (const e of ents.values()) {
+    if (e.type !== 'IFCSLAB') continue;
+    const p = arg(e.args), tag = p[7].replace(/'/g, '');
+    const m = /^roof\.slope(\d)$/.exec(tag);
+    if (!m) continue;
+    slopes++;
+    const { z, axis } = zAxis(p[5]);
+    const pitch = Math.acos(axis[2]) * 180 / Math.PI;
+    if (Math.abs(pitch - house.roof.pitch) > 0.01)
+      errs.push(`${tag}: посажен под ${pitch.toFixed(1)}°, в модели ${house.roof.pitch}°`);
+    // Скат разворачивается из собственных осей: перевёрнутая нормаль даёт
+    // ту же отметку в середине и ту же площадь — и кровлю ложбиной вместо конька.
+    // Ловится только тем, что верхний край обязан оказаться на коньке
+    const ax = arg(ent(arg(ent(p[5]).args)[1]).args);
+    const nrm = vec(ax[1]), rf = vec(ax[2]);
+    const lx = rf.map((c, i) => c - dot(rf, nrm) * nrm[i]);
+    const nl = Math.hypot(...lx);
+    const ly = cross(nrm, lx.map(c => c / nl));
+    const c0 = world(p[5]), half = g.slopeLen / 2;
+    const at = k => ({
+      pos: g.alongY ? c0.x + ly[0] * k * half : c0.y + ly[1] * k * half,
+      z: z + ly[2] * k * half
+    });
+    const [hi, lo] = [at(1), at(-1)].sort((a, b) => b.z - a.z);
+    for (const [what, got, wantV] of [
+      ['конёк', hi.z, g.ridgeZ], ['карниз', lo.z, g.eaveZ]])
+      if (Math.abs(got - wantV) > 1) errs.push(`${tag}: ${what} на ${Math.round(got)}, по модели ${wantV}`);
+    if (Math.abs(hi.pos - ridgePos) > 1)
+      errs.push(`${tag}: верхний край на ${Math.round(hi.pos)}, конёк на ${ridgePos} — скат перевёрнут`);
+    if (Math.abs(lo.pos - eavePos[m[1]]) > 1)
+      errs.push(`${tag}: карниз на ${Math.round(lo.pos)}, по модели ${eavePos[m[1]]}`);
+  }
+  if (slopes !== 2) errs.push(`скатов кровли ${slopes}, а двускатная — это два`);
+
+  // труба обязана выйти на расчётную отметку: её считает flueTop, а здесь
+  // складывается посадка и высота тела
+  for (const e of ents.values()) {
+    if (e.type !== 'IFCCHIMNEY') continue;
+    const p = arg(e.args), tag = p[7].replace(/'/g, '');
+    const { z } = zAxis(p[5]);
+    const solid = arg(arg(ent(arg(ent(p[6]).args)[2].slice(1, -1)).args)[3].slice(1, -1))[0];
+    const top = z + Number(arg(ent(solid).args)[3]);
+    const f = (house.levels[house.levels.length - 1].flues || []).find(x => `${x.id}.over` === tag);
+    const wantTop = f && flueTop(house, f);
+    if (f && Math.abs(top - wantTop) > 1)
+      errs.push(`${tag}: верх на ${Math.round(top)}, по расчёту ${wantTop}`);
+  }
+}
+
 const kb = (text.length / 1024).toFixed(0);
 if (errs.length) {
   console.log(`Файл записан, но не сходится (${errs.length}):\n`);
@@ -204,3 +296,9 @@ if (errs.length) {
 console.log(`out/house.ifc · ${ents.size} записей · ${kb} КБ`);
 console.log(`  помещений ${rooms} · стен ${walls} · проёмов ${opens} + ${holes} в перекрытиях (место сверено)`);
 console.log(`  мебели ${furn} · инженерии ${points}`);
+if (house.roof) {
+  const g = roofGeom(house);
+  console.log(`  кровля ${g.area.toFixed(1)} м² под ${house.roof.pitch}°, конёк ${(g.ridgeZ / 1000).toFixed(3)} (отметки сверены)`);
+}
+if (V) console.log(`  веранда: свай ${V.piles.length} · стоек ${V.posts.length} · навес ${V.canopyArea.toFixed(1)} м²`);
+if (pits.length) console.log(`  приямков ${pits.length} · стенок ${3 * pits.length} · решёток ${pits.length}`);

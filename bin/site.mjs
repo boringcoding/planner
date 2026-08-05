@@ -2,7 +2,8 @@
 // Как и всё остальное, выводится из data/house.json — площади не хранятся, а считаются.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, explication, areas } from '../src/render.mjs';
+import { renderLevel, renderSystem, renderRoof, explication, areas } from '../src/render.mjs';
+import { roofGeom, verandaGeom, flueTop } from '../src/roof.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 import { ifc } from '../src/ifc.mjs';
@@ -47,6 +48,7 @@ const facts = [
 ];
 
 const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
+  + (house.roof ? '<a href="#roof">Кровля</a>' : '')
   + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.title.split(' · ')[0])}</a>`).join('')
   + '<a href="#elev">Развёртки</a>' + (hasEngine ? '<a href="#ifc">Модель</a>' : '');
 
@@ -69,6 +71,43 @@ const sheets = levels.map(({ L, e, svg }) => `
         </tfoot>
       </table>
     </section>`).join('\n');
+
+// Кровля: на планах этажей её нет по определению, а под ней и водосток,
+// и высоты труб, и навес веранды. Отдельный лист — единственное место,
+// где это видно
+const roofSection = (() => {
+  if (!house.roof) return '';
+  const R = house.roof, g = roofGeom(house), V = verandaGeom(house);
+  const top = house.levels[house.levels.length - 1];
+  const rows = [
+    ['Уклон', `${R.pitch}°, конёк ${g.alongY ? 'вдоль дома' : 'поперёк дома'}`],
+    ['Конёк', `${m2(g.ridgeZ / 1000)} м от нуля`],
+    ['Карниз', `${m2(g.eaveZ / 1000)} м, свес ${R.eave} и ${R.gable} по фронтону`],
+    ['Скаты', `${m2(g.area)} м², в плане ${m2(g.plan)} м²`],
+    ['Стропила', `${R.rafter[0]}×${R.rafter[1]} с шагом ${R.rafterStep}, ${g.rafters} шт`],
+    ['Покрытие', R.cover],
+    ['Водосток', `жёлоб ø${R.gutter} на ${m2(g.gutterLen / 1000)} м, труб ${g.drains}`],
+    ['Чердак', `холодный, утепление перекрытия ${R.insulation}, продух ${R.vent}`],
+    ...(top.flues || []).map(f => [`Дымоход ${f.id.split('.')[1]}`, `верх ${m2(flueTop(house, f) / 1000)} м`]),
+    ...(top.ducts || []).map(d => [`Вентшахта ${d.id.split('.')[1]}`, `верх ${m2(flueTop(house, d) / 1000)} м`]),
+    ...(V ? [['Веранда', `настил ${m2(V.deckArea)} м², навес ${m2(V.canopyArea)} м² под ${V.v.pitch}°`],
+    ['Под навесом', `${V.clear} мм у наружного края`]] : [])
+  ];
+  return `
+    <section class="sheet" id="roof">
+      <div class="sheet-head">
+        <h2>Кровля</h2>
+        <p class="meta">Двускатная с холодным чердаком. Отметки конька, карниза и верха каждой трубы
+          посчитаны от уклона: поменять уклон в данных — пересчитаются и лист, и выгрузка, и смета.</p>
+      </div>
+      <figure class="plan">${renderRoof(house)}</figure>
+      <table class="expl">
+        <caption>Решение</caption>
+        <thead><tr><th>Что</th><th>Как</th></tr></thead>
+        <tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</tbody>
+      </table>
+    </section>`;
+})();
 
 const sysSections = bills.map(({ sys, b }) => `
     <section class="sheet" id="${slug(sys.id)}">
@@ -224,6 +263,7 @@ const html = `<!doctype html>
 
   <nav>${nav}<a href="#brief">Задание</a></nav>
 ${sheets}
+${roofSection}
 ${sysSections}
 ${elevSection}
 ${viewerSection}
@@ -264,10 +304,11 @@ for (const { L, svg } of levels) fs.writeFileSync(`site/${L.id}.svg`, svg);
 for (const { sys, b } of bills)
   for (const L of house.levels) fs.writeFileSync(`site/${sys.id}-${L.id}.svg`, renderSystem(house, L, sys, b));
 for (const { r, svg } of elevs) fs.writeFileSync(`site/elev-${r.id}.svg`, svg);
+if (house.roof) fs.writeFileSync('site/roof.svg', renderRoof(house));
 fs.writeFileSync('site/house.ifc', ifcText);
 if (hasEngine) {
   fs.copyFileSync(new URL('../src/viewer.js', import.meta.url), 'site/viewer.js');
   for (const f of WEB_IFC) fs.copyFileSync(new URL(f, engineDir), `site/${f}`);
 }
-console.log(`site/index.html + ${levels.length + bills.length * house.levels.length + elevs.length} SVG`
+console.log(`site/index.html + ${levels.length + (house.roof ? 1 : 0) + bills.length * house.levels.length + elevs.length} SVG`
   + ` + house.ifc${hasEngine ? ' + смотрелка' : ' (движок не установлен, 3D без него)'}`);

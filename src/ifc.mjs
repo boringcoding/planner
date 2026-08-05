@@ -63,6 +63,7 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
+import { roofGeom, verandaGeom, pitGeom, flueTop } from './roof.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
   const S = house.shell;
@@ -143,6 +144,10 @@ export function ifc(house, systems = [], opt = {}) {
       : [pt3(x, y, z), '$', '$']);
     return E('IFCLOCALPLACEMENT', [rel, ax]);
   };
+  // наклонная посадка: скат кровли и навес веранды лежат не горизонтально,
+  // и «плоская плита с уклоном в свойствах» — это не модель, а обещание
+  const placeAx = (rel, [x, y, z], axis, ref) =>
+    E('IFCLOCALPLACEMENT', [rel, E('IFCAXIS2PLACEMENT3D', [pt3(x, y, z), dir3(...axis), dir3(...ref)])]);
 
   // прямоугольная призма в локальных осях элемента
   const boxSolid = (w, h, dz, dx = 0, dy = 0, dzOff = 0) => {
@@ -322,22 +327,150 @@ export function ifc(house, systems = [], opt = {}) {
 
   // ---- веранда -----------------------------------------------------------
   // Вход в дом по заданию только с неё: без веранды входная дверь
-  // открывается в пустоту, и это видно сразу, как только смотришь на модель
-  for (const s of storeys) {
-    const v = s.lv.veranda;
-    if (!v) continue;
-    const deck = E('IFCSLAB', [G(`veranda:${s.lv.id}`), owner, str('Веранда'), '$', '$',
-      place(s.pl, v.x + v.w / 2, Y(v.y + v.h / 2), -120),
-      bodyOf([boxSolid(v.w, v.h, 120)]), str(`${s.lv.id}.veranda`), '.FLOOR.']);
-    put(s.st, deck);
-    addProps(deck, `veranda:${s.lv.id}`, [['id', `${s.lv.id}.veranda`],
-    ['area', (v.w * v.h / 1e6).toFixed(2)]]);
-    for (const [dx, dy] of [[v.w - 100, 100], [v.w - 100, v.h / 2], [v.w - 100, v.h - 100]]) {
-      const c = E('IFCCOLUMN', [G(`vpost:${s.lv.id}:${dy}`), owner, str('Стойка веранды'), '$', '$',
-        place(s.pl, v.x + dx, Y(v.y + dy), 0),
-        bodyOf([boxSolid(150, 150, s.lv.clear)]), '$', '.COLUMN.']);
-      put(s.st, c);
+  // открывается в пустоту, и это видно сразу, как только смотришь на модель.
+  // Выгружается конструкцией, а не одним прямоугольником: сваи, обвязка,
+  // настил, стойки и наклонный навес — иначе «веранда есть» ничего не значит
+  {
+    const V = verandaGeom(house);
+    const s = V && storeys.find(x => x.lv.veranda);
+    if (V && s) {
+      const v = V.v, lv = s.lv;
+      const deckTh = v.board + v.joist[0];
+      const deck = E('IFCSLAB', [G(`veranda:${lv.id}`), owner, str('Настил веранды'), '$', '$',
+        place(s.pl, v.x + v.w / 2, Y(v.y + v.h / 2), v.deck - deckTh),
+        bodyOf([boxSolid(v.w, v.h, deckTh)]), str(`${lv.id}.veranda`), '.FLOOR.']);
+      put(s.st, deck);
+      addProps(deck, `veranda:${lv.id}`, [['id', `${lv.id}.veranda`],
+      ['area', V.deckArea.toFixed(2)], ['deck', v.deck], ['joists', V.joists]]);
+
+      for (const q of V.piles) {
+        const el = E('IFCPILE', [G(`vpile:${q.id}`), owner, str('Свая веранды'), '$', '$',
+          place(s.pl, q.x + q.w / 2, Y(q.y + q.h / 2), V.pileBottom),
+          bodyOf([cylSolid(v.pile / 2, V.pileTop - V.pileBottom)]), str(q.id), '.COLUMN_PILE.', '$']);
+        put(s.st, el);
+      }
+      // обвязка по двум рядам свай — на ней лежат лаги
+      for (const [i, q] of V.piles.filter((_, k) => k < 2).entries()) {
+        const el = E('IFCBEAM', [G(`vbeam:${lv.id}:${i}`), owner, str('Обвязка веранды'), '$', '$',
+          place(s.pl, q.x + q.w / 2, Y(v.y + v.h / 2), V.beamBottom),
+          bodyOf([boxSolid(v.beam[1], v.h, v.beam[0])]), str(`${lv.id}.vbeam${i + 1}`), '.BEAM.']);
+        put(s.st, el);
+      }
+      for (const q of V.posts) {
+        const el = E('IFCCOLUMN', [G(`vpost:${q.id}`), owner, str('Стойка веранды'), '$', '$',
+          place(s.pl, q.x + q.w / 2, Y(q.y + q.h / 2), v.deck),
+          bodyOf([boxSolid(v.post, v.post, V.postZ)]), str(q.id), '.COLUMN.']);
+        put(s.st, el);
+      }
+      // навес: односкатный, от стены дома вниз к наружному краю
+      const b = V.canopyBox, p = v.pitch * Math.PI / 180;
+      const east = V.wall === 'E' ? 1 : -1;
+      const cz = (v.attach + V.dropZ) / 2;
+      const canopy = E('IFCSLAB', [G(`vcanopy:${lv.id}`), owner, str('Навес веранды'), '$', '$',
+        placeAx(s.pl, [b.x + b.w / 2, Y(b.y + b.h / 2), cz - lv.base + lv.base],
+          [east * Math.sin(p), 0, Math.cos(p)], [0, -east, 0]),
+        bodyOf([boxSolid(b.h, V.canopyLen, 60, 0, 0, -60)]), str(`${lv.id}.canopy`), '.ROOF.']);
+      put(s.st, canopy);
+      addProps(canopy, `vcanopy:${lv.id}`, [['id', `${lv.id}.canopy`], ['pitch', v.pitch],
+      ['area', V.canopyArea.toFixed(2)], ['clear', V.clear]]);
     }
+  }
+
+  // ---- кровля ------------------------------------------------------------
+  // Два наклонных ската под IfcRoof, мауэрлат по обеим несущим стенам
+  // и коньковый прогон. Уклон здесь настоящий: скат посажен наклонной осью,
+  // а не положен плашмя с уклоном в свойствах
+  if (house.roof) {
+    const R = house.roof, g = roofGeom(house), top = storeys[storeys.length - 1];
+    const p = R.pitch * Math.PI / 180, th = R.rafter[0];
+    const roof = E('IFCROOF', [G('roof'), owner, str('Кровля'), '$', '$',
+      place(top.pl, 0, 0, 0), '$', str('roof'), R.type === 'gable' ? '.GABLE_ROOF.' : '.NOTDEFINED.']);
+    put(top.st, roof);
+    addProps(roof, 'roof', [['pitch', R.pitch], ['area', g.area.toFixed(2)],
+    ['ridge', g.ridgeZ], ['eave', g.eaveZ], ['cover', R.cover]]);
+
+    const slopes = [];
+    for (const n of [-1, 1]) {                              // ЗАПАД и ВОСТОК либо ЮГ и СЕВЕР
+      const cz = (g.ridgeZ + g.eaveZ) / 2 - top.lv.base;
+      const [cx, cy, axis, ref] = g.alongY
+        ? [g.ridge.x1 + n * (g.span / 2 + R.eave) / 2, Y(S.h / 2),
+          [n * Math.sin(p), 0, Math.cos(p)], [0, -n, 0]]
+        : [S.w / 2, Y(g.ridge.y1 + n * (g.span / 2 + R.eave) / 2),
+          [0, -n * Math.sin(p), Math.cos(p)], [n, 0, 0]];
+      const sl = E('IFCSLAB', [G(`roof:slope${n > 0 ? 2 : 1}`), owner, str('Скат кровли'), '$', '$',
+        placeAx(top.pl, [cx, cy, cz], axis, ref),
+        bodyOf([boxSolid(g.slopeW, g.slopeLen, th, 0, 0, -th)]),
+        str(`roof.slope${n > 0 ? 2 : 1}`), '.ROOF.']);
+      slopes.push(sl);
+    }
+    rels.push(E('IFCRELAGGREGATES', [G('agg:roof'), owner, '$', '$', roof, L(slopes)]));
+
+    // мауэрлат по обеим стенам, на которые опираются стропила
+    for (const n of [-1, 1]) {
+      const [mx, my, mw, mh] = g.alongY
+        ? [n < 0 ? S.wall / 2 : S.w - S.wall / 2, Y(S.h / 2), R.mauerlat[0], S.h]
+        : [S.w / 2, n < 0 ? Y(S.wall / 2) : Y(S.h - S.wall / 2), S.w, R.mauerlat[0]];
+      const el = E('IFCBEAM', [G(`roof:mauerlat${n > 0 ? 2 : 1}`), owner, str('Мауэрлат'), '$', '$',
+        place(top.pl, mx, my, R.base - top.lv.base - R.mauerlat[1]),
+        bodyOf([boxSolid(mw, mh, R.mauerlat[1])]), str(`roof.mauerlat${n > 0 ? 2 : 1}`), '.BEAM.']);
+      put(top.st, el);
+    }
+    // коньковый прогон
+    {
+      const [cx, cy, cw, ch] = g.alongY
+        ? [g.ridge.x1, Y(S.h / 2), R.purlin[1], S.h] : [S.w / 2, Y(g.ridge.y1), S.w, R.purlin[1]];
+      const el = E('IFCBEAM', [G('roof:purlin'), owner, str('Коньковый прогон'), '$', '$',
+        place(top.pl, cx, cy, g.ridgeZ - top.lv.base - R.purlin[0] - th),
+        bodyOf([boxSolid(cw, ch, R.purlin[0])]), str('roof.purlin'), '.BEAM.']);
+      put(top.st, el);
+    }
+    // надкровельная часть труб: без неё дымоход обрывается в чердаке
+    for (const f of top.lv.flues || []) {
+      const z0 = Math.round(g.zAt(f.x + f.w / 2, f.y + f.h / 2)) - top.lv.base;
+      const el = E('IFCCHIMNEY', [G(`chimney:${f.id}`), owner, str('Дымоход над кровлей'), '$', '$',
+        place(top.pl, f.x + f.w / 2, Y(f.y + f.h / 2), z0),
+        bodyOf([boxSolid(f.w, f.h, flueTop(house, f) - top.lv.base - z0)]),
+        str(`${f.id}.over`), '.NOTDEFINED.']);
+      put(top.st, el);
+      addProps(el, `chimney:${f.id}`, [['id', `${f.id}.over`], ['top', flueTop(house, f)]]);
+    }
+    for (const d of top.lv.ducts || []) {
+      const z0 = Math.round(g.zAt(d.x + d.w / 2, d.y + d.h / 2)) - top.lv.base;
+      const el = E('IFCBUILDINGELEMENTPROXY', [G(`ductover:${d.id}`), owner, str('Вентшахта над кровлей'), '$', '$',
+        place(top.pl, d.x + d.w / 2, Y(d.y + d.h / 2), z0),
+        bodyOf([boxSolid(d.w, d.h, flueTop(house, d) - top.lv.base - z0)]),
+        str(`${d.id}.over`), '.ELEMENT.']);
+      put(top.st, el);
+    }
+  }
+
+  // ---- приямок люка ------------------------------------------------------
+  // Коробка дровяника: три бетонные стенки, дно и решётка сверху. Без неё
+  // люк открывается в грунт, и «дрова падают прямо к котлу» остаётся словами
+  for (const q of pitGeom(house)) {
+    const s = storeys.find(x => (x.lv.windows || []).some(w => w.id === q.win));
+    if (!s) continue;
+    const b = q.box, t = q.wall, horiz = q.side === 'S' || q.side === 'N';
+    const sides = horiz
+      ? [[b.x, b.y, t, b.h], [b.x + b.w - t, b.y, t, b.h],
+      [b.x, q.side === 'S' ? b.y : b.y + b.h - t, b.w, t]]
+      : [[b.x, b.y, b.w, t], [b.x, b.y + b.h - t, b.w, t],
+      [q.side === 'W' ? b.x : b.x + b.w - t, b.y, t, b.h]];
+    sides.forEach((r, i) => {
+      const el = E('IFCWALL', [G(`pit:${q.id}:${i}`), owner, str('Стенка приямка'), '$', '$',
+        place(s.pl, r[0] + r[2] / 2, Y(r[1] + r[3] / 2), q.floor - s.lv.base),
+        bodyOf([boxSolid(r[2], r[3], q.top - q.floor)]), str(`${q.id}.w${i + 1}`), '.SOLIDWALL.']);
+      put(s.st, el);
+    });
+    const floor = E('IFCSLAB', [G(`pitfloor:${q.id}`), owner, str('Дно приямка'), '$', '$',
+      place(s.pl, b.x + b.w / 2, Y(b.y + b.h / 2), q.floor - s.lv.base - t),
+      bodyOf([boxSolid(b.w, b.h, t)]), str(`${q.id}.floor`), '.BASESLAB.']);
+    put(s.st, floor);
+    const cover = E('IFCPLATE', [G(`pitcover:${q.id}`), owner, str('Решётка приямка'), '$', '$',
+      place(s.pl, b.x + b.w / 2, Y(b.y + b.h / 2), q.top - s.lv.base - 60),
+      bodyOf([boxSolid(b.w, b.h, 60)]), str(`${q.id}.cover`), '.NOTDEFINED.']);
+    put(s.st, cover);
+    addProps(cover, `pitcover:${q.id}`, [['id', q.id], ['floor', q.floor], ['top', q.top]]);
   }
 
   // ---- помещения ---------------------------------------------------------
