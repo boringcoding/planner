@@ -6,8 +6,8 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom } from '../src/roof.mjs';
-import { bill, runSegments3d } from '../src/systems.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom, drainGeom } from '../src/roof.mjs';
+import { bill, runSegments3d, feedsGeom } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -54,7 +54,8 @@ const points = systems.reduce((s, x) => s + x.points.length, 0);
 // дырки в перекрытиях: под лестницу и под каждую шахту; продух в каждом фронтоне
 const holes = house.levels.reduce((s, L, i) => s
   + (L.stair && house.levels[i + 1] ? 1 : 0) + (L.riser ? 1 : 0)
-  + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length, 0);
+  + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length
+  + (L.atticHatch ? 1 : 0), 0);
 const vents = roofOn * 2;
 const rholes = roofOn ? roofHoles(house).length : 0;
 
@@ -64,7 +65,9 @@ const rholes = roofOn ? roofHoles(house).length : 0;
 const porches = porchGeom(house);
 const apron = blindGeom(house);
 const ramps = rampGeom(house);
-const slabs = house.levels.length + 1 + (V ? 2 : 0) + roofOn * 2
+const F = house.foundation || {};
+const slabs = house.levels.length + 1 + (F.lean ? 1 : 0) + (F.sand ? 1 : 0)
+  + (V ? 2 : 0) + roofOn * 2
   + 2 * pits.length + porches.length + apron.length + ramps.length;
 const flues = house.levels[house.levels.length - 1].flues || [];
 
@@ -82,6 +85,11 @@ for (const { sys, b } of bills) {
 }
 const gut = roofOn ? gutterGeom(house) : null;
 if (gut) nSeg.IFCPIPESEGMENT += gut.gutters.length + gut.drains.length;
+// пристенный дренаж и наружные вводы
+nSeg.IFCPIPESEGMENT += drainGeom(house).ring.length;
+for (const sys of systems)
+  for (const f of feedsGeom(house, sys))
+    nSeg[f.kind === 'power' ? 'IFCCABLECARRIERSEGMENT' : 'IFCPIPESEGMENT']++;
 
 const want = [
   ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
@@ -94,7 +102,7 @@ const want = [
   // два снегозадержателя
   ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)
     + roofOn * (house.roof.snowGuard ? 2 : 0)],
-  ['IFCPLATE', pits.length],
+  ['IFCPLATE', pits.length + house.levels.filter(L => L.atticHatch).length],
   ['IFCSTAIRFLIGHT', porches.length + (V && V.deckSteps.length ? 1 : 0)],
   // ограждения: марши с решением rail и настил веранды
   ['IFCRAILING', house.levels.reduce((s, L, i) => s
@@ -189,7 +197,8 @@ for (const L of house.levels) {
     ...(L.stair && house.levels[house.levels.indexOf(L) + 1] ? [[L.stair, `${L.id}.stair`]] : []),
     ...(L.riser ? [[L.riser, L.riser.id]] : []),
     ...(L.ducts || []).map(d => [d, d.id]),
-    ...(L.flues || []).filter(f => !f.outside).map(f => [f, f.id])
+    ...(L.flues || []).filter(f => !f.outside).map(f => [f, f.id]),
+    ...(L.atticHatch ? [[L.atticHatch, L.atticHatch.id]] : [])
   ];
   for (const [r, key] of q) expect.set(key, [r.x + r.w / 2, S.h - (r.y + r.h / 2)]);
 }

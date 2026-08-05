@@ -15,6 +15,7 @@
 // не бывает, и такой метраж хуже отсутствующего.
 
 import { point, pathOnLevel } from './model.mjs';
+import { siteMargin } from './roof.mjs';
 
 export const KIND = {
   socket: { l: 'розетка', mat: 'ВВГнг-LS 3×2,5', top: 'chain', by: 'room' },
@@ -185,6 +186,22 @@ export function trunkSegments3d(house, sys, t) {
 export const segsLen = segs => segs.reduce((s, x) =>
   s + (x.v ? x.z1 - x.z0 : Math.abs(x.b.x - x.a.x) + Math.abs(x.b.y - x.a.y)), 0);
 
+// Наружные сети: ввод и выпуск — от границы площадки до стены дома.
+// Решение (сторона, место, глубина, уклон) лежит в данных системы,
+// длина считается от того же отступа, что и грунт площадки
+export function feedsGeom(house, sys) {
+  const S = house.shell, m = siteMargin(house);
+  return (sys.feeds || []).map(f => {
+    const z0 = -f.depth;                                    // у стены дома
+    const z1 = -f.depth - (f.slope ? Math.round(m * f.slope / 100) : 0);   // у границы
+    const [a, b] = f.side === 'S' ? [{ x: f.at, y: 0, z: z0 }, { x: f.at, y: -m, z: z1 }]
+      : f.side === 'N' ? [{ x: f.at, y: S.h, z: z0 }, { x: f.at, y: S.h + m, z: z1 }]
+        : f.side === 'W' ? [{ x: 0, y: f.at, z: z0 }, { x: -m, y: f.at, z: z1 }]
+          : [{ x: S.w, y: f.at, z: z0 }, { x: S.w + m, y: f.at, z: z1 }];
+    return { ...f, a, b, len: Math.round(Math.hypot(m, z0 - z1)) };
+  });
+}
+
 // ведомость: сколько чего и сколько метров какого материала
 export function bill(house, sys) {
   const groups = new Map();
@@ -204,6 +221,8 @@ export function bill(house, sys) {
   // запас уже сидит в шаге; подводка посчитана прогоном выше
   for (const p of sys.points)
     if (p.kind === 'ufh') addM('PEX 16, контур тёплого пола', Math.round(p.w * p.h / UFH_STEP));
+  // наружные вводы и выпуски — прямые участки, без запаса на изгибы
+  for (const f of feedsGeom(house, sys)) addM(f.mat, f.len);
   for (const p of sys.points) dev.set(p.kind, (dev.get(p.kind) || 0) + 1);
 
   return {

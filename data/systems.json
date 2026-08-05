@@ -1062,6 +1062,16 @@
           "z": 2900,
           "kind": "light"
         }
+      ],
+      "feeds": [
+        {
+          "id": "eom.in1",
+          "kind": "power",
+          "side": "S",
+          "at": 700,
+          "depth": 700,
+          "mat": "ВВГнг-LS 5×10, кабельный ввод"
+        }
       ]
     },
     {
@@ -1381,6 +1391,25 @@
           "z": 300,
           "kind": "drain",
           "host": "second.f11"
+        }
+      ],
+      "feeds": [
+        {
+          "id": "vk.in1",
+          "kind": "water",
+          "side": "S",
+          "at": 550,
+          "depth": 2800,
+          "mat": "ПНД 32, ввод воды"
+        },
+        {
+          "id": "vk.out1",
+          "kind": "sewer",
+          "side": "S",
+          "at": 7450,
+          "depth": 1500,
+          "slope": 2,
+          "mat": "ПП 110, выпуск канализации"
         }
       ]
     },

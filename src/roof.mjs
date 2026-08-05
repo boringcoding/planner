@@ -182,6 +182,32 @@ export function blindGeom(house) {
   return strips.map(s => ({ ...s, top: ground, th }));
 }
 
+// отступ площадки от стен: до границы участка, один на грунт, дренаж и вводы
+export const siteMargin = house =>
+  (house.project && house.project.plot && house.project.plot.setback) || 3000;
+
+// подошва фундаментного пирога: плита, подбетонка, подушка — решение в данных
+export function foundationBottom(house) {
+  const F = house.foundation || {};
+  return house.levels[0].base - (F.slab ?? 400) - (F.lean ?? 0) - (F.sand ?? 0);
+}
+
+// ─────────────────────────────────────────────────────────────── дренаж
+// Пристенный дренаж по периметру на уровне подошвы: смета платила за него
+// строкой «периметр плюс сколько-то», а тела и честной длины не было
+export function drainGeom(house) {
+  const S = house.shell, off = 500;
+  const z = foundationBottom(house) - 50;                   // ось чуть ниже подошвы
+  const ring = [
+    { id: 'site.drain1', x: -off, y: -off, w: S.w + 2 * off, h: 0 },
+    { id: 'site.drain2', x: -off, y: S.h + off, w: S.w + 2 * off, h: 0 },
+    { id: 'site.drain3', x: -off, y: -off, w: 0, h: S.h + 2 * off },
+    { id: 'site.drain4', x: S.w + off, y: -off, w: 0, h: S.h + 2 * off }
+  ];
+  const len = ring.reduce((s, r) => s + Math.max(r.w, r.h), 0);
+  return { ring, z, r: 55, len };
+}
+
 // ───────────────────────────────────────────────────────────────── грунт
 // Дом стоит в земле, а не в пустоте: цоколь заглублён, наружу торчат
 // 300 мм, сваи веранды и фундаменты труб уходят в грунт. Без тела земли
@@ -191,8 +217,10 @@ export function blindGeom(house) {
 export function groundGeom(house) {
   const S = house.shell;
   const ground = house.site.ground ?? -300;
-  const m = (house.project && house.project.plot && house.project.plot.setback) || 3000;
-  const bottom = ground - 3300;                             // ниже подошвы свай
+  const m = siteMargin(house);
+  const V = verandaGeom(house);
+  // низ грунта — ниже всего, что в него закопано: подошвы пирога и свай
+  const bottom = Math.min(foundationBottom(house), V ? V.pileBottom : 0) - 300;
   const strips = [
     { x: -m, y: -m, w: S.w + 2 * m, h: m },                 // юг
     { x: -m, y: S.h, w: S.w + 2 * m, h: m },                // север

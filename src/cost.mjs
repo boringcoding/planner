@@ -6,7 +6,7 @@
 // не видно границы, всегда «дешевле» настоящей.
 
 import { bill } from './systems.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom, drainGeom } from './roof.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
 const mm = v => v / 1000;                      // мм -> м
@@ -27,19 +27,24 @@ export function quantities(house, systems) {
   const cokol = lv('cokol'), first = lv('first'), second = lv('second');
 
   // ---- земля и фундамент ---------------------------------------------------
-  const digDepth = mm(-cokol.base) + 0.4 + 0.1; // до низа подготовки
+  // до низа подготовки: пол цоколя, плита и подбетонка из данных фундамента
+  const digDepth = mm(-cokol.base)
+    + mm((house.foundation || {}).slab ?? 400) + mm((house.foundation || {}).lean ?? 100);
   q.digDepth = digDepth;
   q.dig = (W + 2) * (H + 2) * digDepth * 1.15;  // с откосами
-  q.slabArea = (W + 0.4) * (H + 0.4);           // плита с выпуском по 200
-  q.sandbed = q.slabArea * 0.3;
-  q.lean = q.slabArea * 0.1;
-  q.slabFoot = q.slabArea * 0.4;                // фундаментная плита 400
+  // фундаментный пирог — из тех же данных, что и тела в выгрузке
+  const F = house.foundation || {};
+  const fOut = mm(F.out ?? 200) * 2;
+  q.slabArea = (W + fOut) * (H + fOut);         // плита с выпуском за стену
+  q.sandbed = q.slabArea * mm(F.sand ?? 300);
+  q.lean = q.slabArea * mm(F.lean ?? 100);
+  q.slabFoot = q.slabArea * mm(F.slab ?? 400);
   q.rebarFoot = q.slabFoot * 0.1;               // 100 кг/м³
   q.wallCokol = q.perimAxis * mm(cokol.floorToFloor) * t;   // монолитные стены цоколя
   q.rebarCokol = q.wallCokol * 0.08;
   q.waterproof = q.perimAxis * mm(cokol.floorToFloor) + q.slabArea;
   q.xps = q.perimAxis * mm(cokol.floorToFloor) + q.slabArea;
-  q.drainage = q.perimOuter + 8;
+  q.drainage = mm(drainGeom(house).len) + 4;    // кольцо по подошве + сброс в колодец
   q.backfill = q.dig - q.footprint * digDepth;
 
   // ---- проёмы в наружных стенах -------------------------------------------
@@ -234,7 +239,10 @@ export function estimate(house, systems, prices) {
     ['cableP', eom['ВВГнг-LS 3×2,5']], ['cableL', eom['ВВГнг-LS 3×1,5']],
     ['cable5x4', eom['ВВГнг-LS 5×4']], ['cable5x6', eom['ВВГнг-LS 5×6, питающая']],
     ['pex20', vk['PEX 20']], ['pp50', vk['ПП 50']], ['pex25', (vk['PEX 25, стояк'] || 0) + (ov['PEX 25, магистраль'] || 0)],
-    ['pex16', ov['PEX 16, подача и обратка']], ['duct125', ov['воздуховод 125']],
+    ['pex16', (ov['PEX 16, подача и обратка'] || 0) + (ov['PEX 16, контур тёплого пола'] || 0)],
+    ['duct125', ov['воздуховод 125']],
+    ['feedWater', vk['ПНД 32, ввод воды']], ['feedSewer', vk['ПП 110, выпуск канализации']],
+    ['feedPower', eom['ВВГнг-LS 5×10, кабельный ввод']],
     ['utp', (ss['UTP cat.6'] || 0) + (ss['UTP cat.6, магистраль'] || 0)],
     ['coax', ss['RG-6']], ['alarmWire', ss['КСПВ 2×0,5']],
     ['pointEom', q.sys.eom.points], ['pointWater', q.sys.vk.points],
@@ -245,6 +253,7 @@ export function estimate(house, systems, prices) {
 
   add('Лестницы, крыльцо, веранда, отмостка', [
     ['stairConcrete', q.stairConcrete], ['stepFinish', q.steps], ['railing', q.railing],
+    ['atticHatch', house.levels.filter(L => L.atticHatch).length],
     ['blind', q.blind], ['porch', q.porches],
     ['verandaDeck', q.veranda], ['verandaRoof', q.verandaRoof], ['verandaRail', q.verandaRail],
     ['pit', q.pits]

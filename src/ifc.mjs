@@ -63,8 +63,8 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom } from './roof.mjs';
-import { bill, runSegments3d, trunkSegments3d, KIND } from './systems.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom, drainGeom } from './roof.mjs';
+import { bill, runSegments3d, trunkSegments3d, feedsGeom, KIND } from './systems.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
   const S = house.shell;
@@ -451,7 +451,8 @@ export function ifc(house, systems = [], opt = {}) {
       ...(lv.stair && house.levels[house.levels.indexOf(lv) + 1] ? [[lv.stair, `${lv.id}.stair`]] : []),
       ...(lv.riser ? [[lv.riser, lv.riser.id]] : []),
       ...(lv.ducts || []).map(d => [d, d.id]),
-      ...(lv.flues || []).filter(f => !f.outside).map(f => [f, f.id])
+      ...(lv.flues || []).filter(f => !f.outside).map(f => [f, f.id]),
+      ...(lv.atticHatch ? [[lv.atticHatch, lv.atticHatch.id]] : [])
     ];
     for (const [q, key] of holes) {
       const hp = place(s.pl, q.x + q.w / 2, Y(q.y + q.h / 2), lv.clear - 60);
@@ -461,12 +462,61 @@ export function ifc(house, systems = [], opt = {}) {
     }
   }
   {
-    const s0 = storeys[0], base = 400;
-    const pl = place(s0.pl, S.w / 2, Y(S.h / 2), -base);
-    const slab = E('IFCSLAB', [G('slab:base'), owner, str('Плита основания'), '$', '$', pl,
-      bodyOf([paint(boxSolid(S.w, S.h, base), 'slab')]), str('base.slab'), '.BASESLAB.']);
+    // Фундаментный пирог — решение в данных, а не заглушка в коде: плита
+    // с выпуском за стену, под ней подбетонка, под ней песчаная подготовка.
+    // Смета берёт те же числа из того же места
+    const s0 = storeys[0], F = house.foundation || {};
+    const slabTh = F.slab ?? 400, lean = F.lean ?? 0, sand = F.sand ?? 0, out = F.out ?? 0;
+    const pl = place(s0.pl, S.w / 2, Y(S.h / 2), -slabTh);
+    const slab = E('IFCSLAB', [G('slab:base'), owner, str('Плита фундаментная'), '$', '$', pl,
+      bodyOf([paint(boxSolid(S.w + 2 * out, S.h + 2 * out, slabTh), 'slab')]), str('base.slab'), '.BASESLAB.']);
     put(s0.st, slab);
     matOf('Железобетон', slab);
+    addProps(slab, 'slab:base', [['id', 'base.slab'], ['thickness', slabTh], ['out', out]]);
+    if (lean) {
+      const el = E('IFCSLAB', [G('slab:lean'), owner, str('Подбетонка'), '$', '$',
+        place(s0.pl, S.w / 2, Y(S.h / 2), -slabTh - lean),
+        bodyOf([paint(boxSolid(S.w + 2 * out + 200, S.h + 2 * out + 200, lean), 'stone')]),
+        str('base.lean'), '.BASESLAB.']);
+      put(s0.st, el);
+      matOf('Бетон', el);
+    }
+    if (sand) {
+      const el = E('IFCSLAB', [G('slab:sand'), owner, str('Песчаная подготовка'), '$', '$',
+        place(s0.pl, S.w / 2, Y(S.h / 2), -slabTh - lean - sand),
+        bodyOf([paint(boxSolid(S.w + 2 * out + 400, S.h + 2 * out + 400, sand), 'ground')]),
+        str('base.sand'), '.BASESLAB.']);
+      put(s0.st, el);
+      matOf('Песок', el);
+    }
+    // пристенный дренаж по периметру подошвы: смета платит за длину этого
+    // же кольца, а не за «периметр плюс сколько-то»
+    const D = drainGeom(house);
+    for (const q of D.ring) {
+      const horiz = q.w > 0;
+      const [pos, axis, ref] = horiz
+        ? [[q.x, Y(q.y), D.z - s0.lv.base], [1, 0, 0], [0, 1, 0]]
+        : [[q.x, Y(q.y + q.h), D.z - s0.lv.base], [0, 1, 0], [1, 0, 0]];
+      const el = E('IFCPIPESEGMENT', [G(`drain:${q.id}`), owner, str('Дренаж пристенный'), '$', '$',
+        placeAx(s0.pl, pos, axis, ref), bodyOf([paint(cylSolid(D.r, Math.max(q.w, q.h)), 'vk')]),
+        str(q.id), '.RIGIDSEGMENT.']);
+      put(s0.st, el);
+      matOf('Дренажная труба', el);
+    }
+  }
+
+  // ---- люк на чердак -----------------------------------------------------
+  // Чердак холодный, но обслуживаемый: дымоходы и кровля требуют доступа.
+  // Вырез в чердачном перекрытии уже сделан списком дырок, здесь — крышка
+  for (const s of storeys) {
+    const hq = s.lv.atticHatch;
+    if (!hq) continue;
+    const el = E('IFCPLATE', [G(`attic:${hq.id}`), owner, str('Люк на чердак'), '$', '$',
+      place(s.pl, hq.x + hq.w / 2, Y(hq.y + hq.h / 2), s.lv.clear),
+      bodyOf([paint(boxSolid(hq.w, hq.h, 60), 'wood')]), str(hq.id), '.NOTDEFINED.']);
+    put(s.st, el);
+    matOf('Древесина', el);
+    addProps(el, `attic:${hq.id}`, [['id', hq.id]]);
   }
 
   // ---- веранда -----------------------------------------------------------
@@ -1084,6 +1134,30 @@ export function ifc(house, systems = [], opt = {}) {
       put(s.st, el);
       own.push(el);
       addProps(el, `run:${sys.id}:${r.key}`, [['len', r.len], ['points', r.points.length]]);
+    }
+    // наружные сети: ввод и выпуск от границы площадки до стены дома.
+    // Без них дом не подключить — а их не было ни в модели, ни в ведомости
+    for (const f of feedsGeom(house, sys)) {
+      const s0 = storeys[0];
+      const [cls, pd, r] = f.kind === 'power'
+        ? ['IFCCABLECARRIERSEGMENT', '.CONDUITSEGMENT.', 25]
+        : ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', f.kind === 'sewer' ? 55 : 16];
+      const dx = f.b.x - f.a.x, dy = f.b.y - f.a.y, dz = f.b.z - f.a.z;
+      const len = Math.hypot(dx, dy, dz);
+      const el = E(cls, [G(`feed:${f.id}`), owner,
+        str(f.kind === 'sewer' ? 'Выпуск канализации' : f.kind === 'water' ? 'Ввод воды' : 'Кабельный ввод'),
+        '$', '$', place(s0.pl, 0, 0, 0),
+        bodyOf([paint(E('IFCEXTRUDEDAREASOLID', [
+          E('IFCCIRCLEPROFILEDEF', ['.AREA.', '$',
+            E('IFCAXIS2PLACEMENT2D', [E('IFCCARTESIANPOINT', [L(['0.', '0.'])]), '$']), num(r)]),
+          E('IFCAXIS2PLACEMENT3D', [pt3(f.a.x, Y(f.a.y), f.a.z - s0.lv.base),
+            dir3(dx / len, -dy / len, dz / len), dir3(0, 0, 1)]),
+          DZ, num(Math.round(len))]), sys.id)]),
+        str(f.id), pd]);
+      put(s0.st, el);
+      own.push(el);
+      addProps(el, `feed:${f.id}`, [['id', f.id], ['kind', f.kind], ['len', f.len],
+      ['depth', f.depth], ...(f.slope ? [['slope', f.slope]] : [])]);
     }
     for (const t of b.trunks) {
       const segs = trunkSegments3d(house, sys, t);

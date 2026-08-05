@@ -205,6 +205,29 @@ export function checkSystems(house, data) {
               E(`«${g.sym}» ${g.id} без подводки «${KIND[k].l}»`);
         }
 
+    // 9в. дом подключён: есть точки воды — есть ввод, есть канализация —
+    // есть выпуск, электрика — кабельный ввод. Ввод воды ниже промерзания,
+    // выпуск — с уклоном и не мельче метра с утеплением
+    {
+      const feeds = sys.feeds || [];
+      const kinds = new Set(sys.points.map(p => p.kind));
+      const need = [];
+      if (kinds.has('cold')) need.push(['water', 'ввода воды']);
+      if (kinds.has('drain')) need.push(['sewer', 'выпуска канализации']);
+      if (sys.id === 'eom') need.push(['power', 'кабельного ввода']);
+      for (const [k, name] of need)
+        if (!feeds.some(f => f.kind === k)) E(`дом не подключить: нет ${name}`);
+      const frost = house.site.frost || 0;
+      for (const f of feeds) {
+        if (f.kind === 'water' && f.depth < frost + 300)
+          E(`ввод воды на ${f.depth} — выше промерзания ${frost} плюс запас 300`);
+        if (f.kind === 'sewer') {
+          if ((f.slope ?? 0) < 2) E(`выпуск канализации с уклоном ${f.slope ?? 0}% — самотёку нужно 2`);
+          if (f.depth < 1000) E(`выпуск канализации на ${f.depth} — мельче 1000 замерзает и с утеплением`);
+        }
+      }
+    }
+
     // 10. ведомость считается целиком: точка без метража — дыра в смете
     const b = bill(house, sys);
     if (!b.total) E('ведомость пуста');
