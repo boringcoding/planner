@@ -37,7 +37,9 @@ export const LIMITS = {
   roofPitch: [14, 45],     // уклон кровли: ниже 14 фальц течёт, выше 45 парусит
   roofEave: [400, 1000],   // карнизный свес
   flueOverRoof: 2000,      // выше — труба просит растяжек, а не «так сойдёт»
-  canopyClear: 2200,       // низ навеса веранды над настилом
+  canopyClear: 2200,       // низ прогона навеса веранды над настилом
+  deckStep: 80,            // перепад от порога до настила веранды — отбойник, не ступень
+  snowToSill: 100,         // от верха снегового мешка до подоконника окна над навесом
   pitToDoor: 800,          // от края приямка до наружной двери на той же стене
   pitToPorch: 600,         // от бетонного борта приямка до края крыльца
   pitFreeboard: 150,       // порог люка выше дна приямка: запас, пока не потечёт в дом
@@ -676,6 +678,24 @@ export function check(house, brief) {
       .filter(w => (w.side === 'W' || w.side === 'E') === g.alongY));
     if (underEave.length && !R.snowGuard)
       errs.push(`под карнизом ${underEave.length} проёмов, а снегозадержания нет`);
+
+    // 29а. Коньковый прогон опирается на стойки, стойки — на стену, а не
+    // на перекрытие. В данных лежал прогон 200×100 по стойкам 150×150, и
+    // смета за него платила; под линией конька несущей стены нет на всю длину —
+    // над спальней хозяев её нет вовсе. Схема с прогоном разрешена только
+    // тогда, когда стена под коньком есть от торца до торца
+    if (R.purlin || R.post) {
+      const top = house.levels[house.levels.length - 1];
+      const cov = (top.walls || []).filter(w => w.kind === 'bearing')
+        .filter(w => g.alongY ? w.x <= g.ridge.x1 && w.x + w.w >= g.ridge.x1
+          : w.y <= g.ridge.y1 && w.y + w.h >= g.ridge.y1)
+        .reduce((s, w) => s + (g.alongY ? w.h : w.w), 0);
+      const need = g.alongY ? S.h - 2 * S.wall : S.w - 2 * S.wall;
+      if (cov < need)
+        errs.push(`коньковый прогон опирать не на что: несущей стены под коньком ${cov} из ${need}`);
+    }
+    // затяжка есть — значит ферма висячая, и прогон ей не нужен
+    if (!R.tie && !R.purlin) errs.push('стропильная схема не задана: ни затяжки, ни прогона');
   }
 
   // 30. веранда — конструкция, а не пунктир: настил ниже порога, под навесом
@@ -684,16 +704,39 @@ export function check(house, brief) {
   if (V) {
     const { v } = V;
     if (v.deck >= 0) errs.push(`настил веранды на ${v.deck} — вода пойдёт в дом`);
-    if (V.clear < LIMITS.canopyClear)
-      errs.push(`под навесом веранды ${V.clear} мм, нужно ${LIMITS.canopyClear}`);
+    // 30а. Проход меряется под прогоном, а не под плоскостью навеса: головой
+    // встречают прогон. Раньше правило мерило по скату и было на 200 добрее,
+    // чем жизнь
+    if (V.beamClear < LIMITS.canopyClear)
+      errs.push(`под прогоном навеса ${V.beamClear} мм, нужно ${LIMITS.canopyClear}`);
+    // 30б. Настил у входной двери — водоотбойная ступень, а не спотыкач:
+    // из единственного входа в дом шагают вниз ровно здесь
+    for (const L of house.levels)
+      for (const w of (L.windows || []).filter(x => x.kind === 'entrance' || x.kind === 'door')) {
+        if (w.side !== V.wall) continue;
+        if (Math.min(w.b, v.y + v.h) - Math.max(w.a, v.y) <= 0) continue;
+        const step = L.base + (w.sill || 0) - (L.base + v.deck);
+        if (step > LIMITS.deckStep)
+          errs.push(`от порога ${w.id} до настила веранды ${step} — это ступень, а не порог`);
+      }
+    // 30в. Свая ниже промерзания с коэффициентом на неотапливаемое: веранду
+    // не греют, и пучение работает по всей глубине
+    const need = (house.site.ground ?? -300) - Math.round((house.site.frost || 0) * 1.1);
+    if (house.site.frost && V.pileBottom > need)
+      errs.push(`низ сваи веранды ${V.pileBottom}, промерзание ${house.site.frost} требует ${need}`);
+    // 30г. Снеговой мешок у стены над навесом. Прежнее правило сравнивало
+    // подоконник с плоскостью навеса и аттестовало как норму окно, которое
+    // всю зиму стоит в сугробе: снег ложится НА навес и подпирает стену выше него
     const upper = house.levels[house.levels.length - 1];
     for (const w of upper.windows || []) {
       if (w.kind || w.side !== V.wall) continue;
-      const overlap = Math.min(w.b, v.y + v.h) - Math.max(w.a, v.y);
-      if (overlap <= 0) continue;
+      if (Math.min(w.b, v.y + v.h) - Math.max(w.a, v.y) <= 0) continue;
       const sillZ = upper.base + (w.sill || 0);
+      const top = v.attach + V.snowPocket;
       if (v.attach > sillZ)
         errs.push(`навес веранды на ${v.attach} режет окно ${w.id}: подоконник ${sillZ}`);
+      else if (top + LIMITS.snowToSill > sillZ)
+        errs.push(`снеговой мешок над навесом до ${top}, подоконник ${w.id} на ${sillZ} — окно зимой в сугробе`);
     }
   }
 

@@ -16,6 +16,13 @@
       "W": "СЗ · 3 М ДО ГРАНИЦЫ"
     },
     "ground": -300,
+    "frost": 2500,
+    "snow": {
+      "district": "II",
+      "sg": 1.0,
+      "gf": 1.4,
+      "density": 350
+    },
     "designTemp": -33,
     "seismic": 8
   },
@@ -704,8 +711,8 @@
         "canopy": 300,
         "w": 2800,
         "h": 4600,
-        "deck": -150,
-        "attach": 3000,
+        "deck": -50,
+        "attach": 3150,
         "pitch": 12,
         "post": 150,
         "postStep": 2400,
@@ -719,7 +726,7 @@
         ],
         "joistStep": 400,
         "pile": 300,
-        "pileDepth": 2500,
+        "pileDepth": 3000,
         "rail": 1100,
         "steps": 2,
         "board": 28
@@ -1814,32 +1821,27 @@
       50
     ],
     "rafterStep": 600,
-    "purlin": [
+    "tie": [
       200,
       100
+    ],
+    "hanger": [
+      150,
+      50
+    ],
+    "brace": [
+      150,
+      32
     ],
     "mauerlat": [
       150,
       150
     ],
-    "post": [
-      150,
-      150
-    ],
-    "batten": [
-      100,
-      25
-    ],
-    "battenStep": 350,
+    "sheathing": 25,
     "counter": [
       50,
       50
     ],
-    "atticBeam": [
-      200,
-      100
-    ],
-    "atticStep": 600,
     "insulation": 300,
     "cover": "фальцевая кровля, сталь 0,5",
     "gutter": 150,

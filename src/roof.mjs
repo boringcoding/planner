@@ -14,13 +14,25 @@ const rad = d => d * Math.PI / 180;
 // уходят поперёк: при коньке «y» скат считается по ширине дома.
 export function roofGeom(house) {
   const R = house.roof, S = house.shell;
-  const p = rad(R.pitch);
+  const p = rad(R.pitch), tan = Math.tan(p);
   const alongY = R.ridge === 'y';
   const span = alongY ? S.w : S.h;          // пролёт поперёк конька
   const len = alongY ? S.h : S.w;           // длина конька по стене
-  const rise = Math.round(span / 2 * Math.tan(p));
-  const ridgeZ = R.base + rise;             // отметка конька
-  const eaveZ = Math.round(R.base - R.eave * Math.tan(p));  // низ свеса
+  // Отметка кровли — не «верх стены». На мауэрлате лежит затяжка, на затяжке
+  // стропило, на стропиле пирог; и всё это по вертикали, а не по нормали.
+  // Пока скат считался прямо от base, конёк и карниз выходили на 400 мм ниже
+  // настоящих — а из этой же отметки считается высота труб над кровлей,
+  // и обе трубы оказывались короткими, причём правило это пропускало:
+  // оно мерило от той же ошибочной плоскости
+  const pie = R.counter[0] + R.sheathing;                   // вентзазор и настил
+  const deck = R.tie[0] + Math.round((R.rafter[0] + pie) / Math.cos(p));
+  const axis = S.wall / 2;                                  // ось мауэрлата
+  const planeZ = R.base + deck;                             // верх покрытия над ней
+  const half = span / 2 - axis;                             // от оси мауэрлата до конька
+  const rise = Math.round(half * tan);
+  const ridgeZ = Math.round(planeZ + rise);                 // отметка конька
+  const eaveZ = Math.round(planeZ - (axis + R.eave) * tan); // верх покрытия в крайней точке свеса
+  const rafterZ = R.base + R.tie[0];                        // низ стропила по оси мауэрлата
   const ground = house.site.ground ?? -300;                 // планировочная отметка земли
   // контур кровли в плане: карниз по скатным сторонам, фронтон по торцам
   const out = alongY
@@ -32,21 +44,33 @@ export function roofGeom(house) {
   const slopeRun = span / 2 + R.eave;                       // в плане от конька до края
   const slopeLen = Math.round(slopeRun / Math.cos(p));      // по скату
   const slopeW = len + 2 * R.gable;                         // длина ската вдоль конька
+  // Фронтон — не треугольник от верха стены до конька: снизу его подрезает
+  // затяжка, сверху — низ стропила. Считается интегралом, а не «span × rise»
+  const gable = (span * R.tie[0] + 2 * tan * (half * span / 2 - span * span / 8)) / 1e6;
   return {
-    pitch: R.pitch, alongY, span, len, rise, ridgeZ, eaveZ, ground, out, ridge,
-    slopeRun, slopeLen, slopeW,
+    pitch: R.pitch, alongY, span, len, half, deck, rise, ridgeZ, eaveZ, rafterZ,
+    ground, out, ridge, slopeRun, slopeLen, slopeW,
     area: 2 * slopeLen * slopeW / 1e6,                      // площадь скатов, м²
     plan: out.w * out.h / 1e6,                              // площадь в плане, м²
     attic: (S.w - 2 * S.wall) * (S.h - 2 * S.wall) / 1e6,   // чердачное перекрытие
+    gable,                                                  // площадь одного фронтона, м²
+    // Ферма на каждую стропильную пару: затяжка она же балка перекрытия,
+    // стропила, бабка. Прогона и стоек под ним нет и быть не может —
+    // под линией конька несущей стены нет на всю длину дома
+    trusses: Math.floor(len / R.rafterStep) + 1,
+    tieLen: (Math.floor(len / R.rafterStep) + 1) * (span - 2 * axis),   // затяжки, мм
+    hangerLen: (Math.floor(len / R.rafterStep) + 1) * Math.round(half * tan),
+    // ветровые связи: по две диагонали на скат, крыша работает жёстким диском
+    braceLen: 4 * Math.round(Math.hypot(slopeLen, slopeW / 4)),
     rafters: 2 * (Math.floor(slopeW / R.rafterStep) + 1),   // число стропильных ног
     gutterLen: 2 * slopeW,                                  // жёлоб по обоим карнизам, мм
     // водосточных труб: одна на 10 м жёлоба, но не меньше двух на карниз
     drains: 2 * Math.max(2, Math.ceil(slopeW / 10000)),
     drainLen: 2 * Math.max(2, Math.ceil(slopeW / 10000)) * (eaveZ - ground),
-    // отметка кровли над точкой плана — по ней считаются проходы труб
+    // отметка верха покрытия над точкой плана — по ней считаются проходы труб
     zAt(x, y) {
       const d = alongY ? Math.abs(x - S.w / 2) : Math.abs(y - S.h / 2);
-      return R.base - (d - span / 2) * Math.tan(p);
+      return planeZ - (d - half) * tan;
     }
   };
 }
@@ -122,8 +146,15 @@ export function verandaGeom(house) {
     pileBottom: (house.site.ground ?? -300) - v.pileDepth,
     // высота стойки считается по низу навеса над самой стойкой, а не над краем
     postZ: Math.round(v.attach - (v.w - v.post / 2) * tan) - v.deck,
-    // низ навеса над настилом у наружного края — по нему проверяется проход
-    clear: dropZ - v.deck
+    // Низ навеса над настилом у наружного края. По нему раньше проверялся
+    // проход — и зря: под навесом висит прогон, и головой встречают именно его.
+    clear: dropZ - v.deck,
+    beamClear: dropZ - v.beam[0] - v.deck,
+    // Снеговой мешок у стены над навесом. Правило «навес ниже подоконника»
+    // аттестовало как норму окно, которое всю зиму стоит в сугробе: снег
+    // ложится на навес и подпирает стену выше самого навеса
+    snowPocket: Math.round(1000 * (v.snowMu ?? 2.5) * (house.site.snow?.sg ?? 1)
+      / ((house.site.snow?.density ?? 350) * 9.81 / 1000))
   };
 }
 

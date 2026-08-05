@@ -84,20 +84,24 @@ export function quantities(house, systems) {
   const sect = (a, step) => mm(a[0]) * mm(a[1]) / mm(step);   // м³ бруса на м² ската
   q.roofPlan = g.plan;
   q.roof = g.area;
-  q.atticFloor = g.attic - stairHole(second.stair);
-  const ridgePosts = Math.ceil(mm(g.len) / 2.5) + 1;
-  q.timber = q.atticFloor * (sect(R.atticBeam, R.atticStep) + 0.025)   // балки и подшивка
-    + q.roof * (sect(R.rafter, R.rafterStep) + sect(R.batten, R.battenStep) + sect(R.counter, R.rafterStep))
-    + q.perimAxis * mm(R.mauerlat[0]) * mm(R.mauerlat[1])              // мауэрлат
-    + mm(g.len) * mm(R.purlin[0]) * mm(R.purlin[1])                    // коньковый прогон
-    + ridgePosts * mm(R.post[0]) * mm(R.post[1]) * mm(g.rise);         // стойки под прогон
+  // Марша на чердак нет, значит нет и проёма в чердачном перекрытии.
+  // Раньше отсюда вычиталась шахта лестницы — 7,5 м² утеплителя, которых
+  // на самом деле нет; выгрузка при этом дырки в перекрытии не делала
+  q.atticFloor = g.attic;
+  q.timber = q.atticFloor * 0.025                                      // подшивка потолка
+    + mm(g.tieLen) * mm(R.tie[0]) * mm(R.tie[1])                       // затяжки они же балки
+    + 2 * mm(g.hangerLen) * mm(R.hanger[0]) * mm(R.hanger[1])          // бабки, по две доски
+    + mm(g.braceLen) * mm(R.brace[0]) * mm(R.brace[1])                 // ветровые связи
+    + q.roof * (sect(R.rafter, R.rafterStep) + mm(R.sheathing) + sect(R.counter, R.rafterStep))
+    + q.perimAxis * mm(R.mauerlat[0]) * mm(R.mauerlat[1]);             // мауэрлат
   q.gutter = mm(g.gutterLen + g.drainLen);
   q.snowGuard = R.snowGuard ? mm(g.gutterLen) : 0;
   q.woolRoof = q.atticFloor;
 
   // ---- фасад ---------------------------------------------------------------
-  // фронтон — треугольник в полный пролёт, и его высота теперь тоже из модели
-  const gable = mm(g.span) * mm(g.rise);                     // два фронтона
+  // фронтон подрезан снизу затяжкой, сверху низом стропила — не треугольник
+  // «пролёт × подъём», как считалось раньше. Считает roofGeom, здесь только два
+  const gable = 2 * g.gable;
   q.facade = q.perimOuter * (mm(first.floorToFloor + second.floorToFloor) + 0.4) + gable
     - q.openFirst - q.openSecond;
 

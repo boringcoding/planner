@@ -415,13 +415,17 @@ export function ifc(house, systems = [], opt = {}) {
         bodyOf([boxSolid(mw, mh, R.mauerlat[1])]), str(`roof.mauerlat${n > 0 ? 2 : 1}`), '.BEAM.']);
       put(top.st, el);
     }
-    // коньковый прогон
-    {
-      const [cx, cy, cw, ch] = g.alongY
-        ? [g.ridge.x1, Y(S.h / 2), R.purlin[1], S.h] : [S.w / 2, Y(g.ridge.y1), S.w, R.purlin[1]];
-      const el = E('IFCBEAM', [G('roof:purlin'), owner, str('Коньковый прогон'), '$', '$',
-        place(top.pl, cx, cy, g.ridgeZ - top.lv.base - R.purlin[0] - th),
-        bodyOf([boxSolid(cw, ch, R.purlin[0])]), str('roof.purlin'), '.BEAM.']);
+    // Затяжки. Прогона и стоек под ним нет: под линией конька несущей стены
+    // нет на всю длину дома — над спальней хозяев она отсутствует вовсе,
+    // и стойка прогона встала бы на чердачное перекрытие. Распор замыкает
+    // затяжка, она же балка чердачного перекрытия
+    for (let i = 0; i < g.trusses; i++) {
+      const t0 = S.wall / 2 + (g.len - S.wall) * i / (g.trusses - 1);
+      const [tx, ty, tw, tl] = g.alongY
+        ? [S.w / 2, Y(t0), S.w - S.wall, R.tie[1]] : [t0, Y(S.h / 2), R.tie[1], S.h - S.wall];
+      const el = E('IFCBEAM', [G(`roof:tie${i + 1}`), owner, str('Затяжка фермы'), '$', '$',
+        place(top.pl, tx, ty, R.base - top.lv.base),
+        bodyOf([boxSolid(tw, tl, R.tie[0])]), str(`roof.tie${i + 1}`), '.BEAM.']);
       put(top.st, el);
     }
     // надкровельная часть труб: без неё дымоход обрывается в чердаке

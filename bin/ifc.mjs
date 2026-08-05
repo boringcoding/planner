@@ -68,7 +68,9 @@ const want = [
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],
   ['IFCPILE', V ? V.piles.length : 0], ['IFCCOLUMN', V ? V.posts.length : 0],
-  ['IFCBEAM', (V ? 2 : 0) + roofOn * 3], ['IFCPLATE', pits.length],
+  // балки: обвязка веранды, два мауэрлата и затяжка на каждую ферму
+  ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)],
+  ['IFCPLATE', pits.length],
   ['IFCSTAIRFLIGHT', porches.length]
 ];
 for (const [t, n] of want)

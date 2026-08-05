@@ -751,10 +751,11 @@ export function roofSheet(house) {
 // не может разойтись со сметой и с выгрузкой
 const roofNotes = (R, g) => [
   `покрытие — ${R.cover}`,
-  `стропила ${R.rafter[0]}×${R.rafter[1]} с шагом ${R.rafterStep}, прогон ${R.purlin[0]}×${R.purlin[1]} по стойкам ${R.post[0]}×${R.post[1]}`,
-  `обрешётка ${R.batten[0]}×${R.batten[1]} с шагом ${R.battenStep} по контробрешётке ${R.counter[0]}×${R.counter[1]}`,
-  `мауэрлат ${R.mauerlat[0]}×${R.mauerlat[1]} по армопоясу, отметка ${mark(R.base)}`,
-  `чердачное перекрытие — балки ${R.atticBeam[0]}×${R.atticBeam[1]} с шагом ${R.atticStep}, утепление ${R.insulation}`,
+  `${g.trusses} висячих ферм с шагом ${R.rafterStep}: стропила ${R.rafter[0]}×${R.rafter[1]}, затяжка ${R.tie[0]}×${R.tie[1]}, бабка 2×${R.hanger[1]}×${R.hanger[0]}`,
+  `конькового прогона нет: под линией конька несущей стены нет на всю длину дома, распор замыкает затяжка`,
+  `сплошной настил ${R.sheathing} по контробрешётке ${R.counter[0]}×${R.counter[1]}, ветровые связи ${R.brace[1]}×${R.brace[0]}`,
+  `мауэрлат ${R.mauerlat[0]}×${R.mauerlat[1]} по армопоясу, отметка ${mark(R.base)}; низ стропила ${mark(g.rafterZ)}`,
+  `чердачное перекрытие ${g.attic.toFixed(1).replace('.', ',')} м² по затяжкам, утепление ${R.insulation}`,
   `водосток — жёлоб ø${R.gutter} по карнизу${R.snowGuard ? ', снегозадержание' : ''}`,
   `водосточных труб ${g.drains} × ø${R.downpipe || 100}, длина ${(g.drainLen / 1000).toFixed(1).replace('.', ',')} м`,
   `чердак холодный, продух ${R.vent} в каждом фронтоне`
