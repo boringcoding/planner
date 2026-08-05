@@ -149,7 +149,9 @@ export function blindGeom(house) {
   for (const L of house.levels) {
     if (L.veranda) {
       const v = L.veranda;
-      bits.push({ side: v.x >= S.w ? 'E' : 'W', band: [v.y, v.y + v.h] });
+      const V = verandaGeom(house);
+      const y0 = V.deckSteps.length ? Math.min(...V.deckSteps.map(q => q.y)) : v.y;
+      bits.push({ side: v.x >= S.w ? 'E' : 'W', band: [y0, v.y + v.h] });
     }
     for (const w of (L.windows || []).filter(x => x.kind === 'gate'))
       bits.push({ side: w.side, band: [w.a - 150, w.b + 150] });
@@ -299,9 +301,9 @@ export function verandaGeom(house) {
     deckBottom, beamBottom: deckBottom - v.beam[0],         // низ обвязки — по ней сваи
     pileTop: deckBottom - v.beam[0],
     pileBottom: (house.site.ground ?? -300) - v.pileDepth,
-    // высота стойки — до низа полотна навеса над самой стойкой: полотно
-    // толщиной 60 висит под плоскостью, и стойка в плоскость не протыкается
-    postZ: Math.round(v.attach - (v.w - v.post / 2) * tan) - 60 - v.deck,
+    // высота стойки — до плоскости attach над самой стойкой; полотно 60
+    // выдавлено вверх от неё, и стойка упирается в низ, а не прошивает
+    postZ: Math.round(v.attach - (v.w - v.post / 2) * tan) - v.deck,
     // Низ навеса над настилом у наружного края. По нему раньше проверялся
     // проход — и зря: под навесом висит прогон, и головой встречают именно его.
     clear: dropZ - v.deck,
@@ -388,8 +390,10 @@ export function porchGeom(house) {
         : w.side === 'E' ? { x: S.w, y: a, w: depth, h: b - a }
           : w.side === 'S' ? { x: a, y: -depth, w: b - a, h: depth }
             : { x: a, y: S.h, w: b - a, h: depth };
+      // проступей на одну меньше, чем подъёмов: нижний шаг делается с земли,
+      // и плита, отлитая верхом вровень с грунтом, — не ступень, а брусчатка
       const steps = [];
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < n - 1; i++) {
         const k = i + 1;
         steps.push(w.side === 'W' ? { x: -depth - k * tread, y: a, w: tread, h: b - a }
           : w.side === 'E' ? { x: S.w + depth + (k - 1) * tread, y: a, w: tread, h: b - a }
@@ -402,7 +406,7 @@ export function porchGeom(house) {
         sillZ: L.base + (w.sill || 0), drop: P.drop ?? 30,
         depth: horiz ? pad.h : pad.w,
         rise: Math.round((landZ - ground) / n),             // подъём ступени
-        reach: depth + n * tread,                           // полный вынос от стены
+        reach: depth + (n - 1) * tread,                     // полный вынос от стены
         band: horiz ? [pad.x, pad.x + pad.w] : [pad.y, pad.y + pad.h]
       });
     }

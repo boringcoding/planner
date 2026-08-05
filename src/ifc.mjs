@@ -63,7 +63,7 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles } from './roof.mjs';
 import { bill, runSegments3d, trunkSegments3d, KIND } from './systems.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
@@ -516,7 +516,7 @@ export function ifc(house, systems = [], opt = {}) {
       const canopy = E('IFCSLAB', [G(`vcanopy:${lv.id}`), owner, str('Навес веранды'), '$', '$',
         placeAx(s.pl, [b.x + b.w / 2, Y(b.y + b.h / 2), cz - lv.base + lv.base],
           [east * Math.sin(p), 0, Math.cos(p)], [0, -east, 0]),
-        bodyOf([paint(boxSolid(b.h, V.canopyLen, 60, 0, 0, -60), 'roof')]), str(`${lv.id}.canopy`), '.ROOF.']);
+        bodyOf([paint(boxSolid(b.h, V.canopyLen, 60), 'roof')]), str(`${lv.id}.canopy`), '.ROOF.']);
       put(s.st, canopy);
       matOf((house.roof && house.roof.cover) || 'Кровельный лист', canopy);
       addProps(canopy, `vcanopy:${lv.id}`, [['id', `${lv.id}.canopy`], ['pitch', v.pitch],
@@ -591,6 +591,20 @@ export function ifc(house, systems = [], opt = {}) {
       matOf(R.cover, sl);
     }
     rels.push(E('IFCRELAGGREGATES', [G('agg:roof'), owner, '$', '$', roof, L(slopes)]));
+
+    // Дымоходы и вентшахта протыкают кровлю — в скате обязан быть вырез.
+    // На листе кровли проходы нарисованы давно; тело ската шло сквозь них
+    // нерассечённым, и модель расходилась с чертежом
+    for (const hole of roofHoles(house)) {
+      const cx = hole.x + hole.w / 2, cy = hole.y + hole.h / 2;
+      const zc = Math.round(g.zAt(cx, cy)) - top.lv.base;
+      const near = g.alongY ? cx < S.w / 2 : cy < S.h / 2;
+      const host = slopes[near ? 0 : 1];
+      const op = E('IFCOPENINGELEMENT', [G(`roofop:${hole.id}`), owner, str('Проход через кровлю'), '$', '$',
+        place(top.pl, cx, Y(cy), zc - g.rafterDrop - 200),
+        bodyOf([boxSolid(hole.w, hole.h, g.rafterDrop + 400)]), str(hole.id), '.OPENING.']);
+      rels.push(E('IFCRELVOIDSELEMENT', [G(`roofvoids:${hole.id}`), owner, '$', '$', host, op]));
+    }
 
     // мауэрлат по обеим стенам, на которые опираются стропила
     for (const n of [-1, 1]) {

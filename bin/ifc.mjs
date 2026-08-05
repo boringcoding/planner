@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles } from '../src/roof.mjs';
 import { bill, runSegments3d } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
@@ -56,6 +56,7 @@ const holes = house.levels.reduce((s, L, i) => s
   + (L.stair && house.levels[i + 1] ? 1 : 0) + (L.riser ? 1 : 0)
   + (L.ducts || []).length + (L.flues || []).filter(f => !f.outside).length, 0);
 const vents = roofOn * 2;
+const rholes = roofOn ? roofHoles(house).length : 0;
 
 // перекрытия: над каждым уровнем, плита основания, настил веранды, навес,
 // два ската, дно и лоток каждого приямка, площадка каждого крыльца,
@@ -83,7 +84,7 @@ const gut = roofOn ? gutterGeom(house) : null;
 if (gut) nSeg.IFCPIPESEGMENT += gut.gutters.length + gut.drains.length;
 
 const want = [
-  ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents],
+  ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
   ['IFCFURNISHINGELEMENT', furn], ['IFCBUILDINGSTOREY', house.levels.length],
   ['IFCSYSTEM', systems.length],
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
@@ -110,7 +111,8 @@ for (const [t, n] of want)
 // стоит в проёме. Дырки в перекрытиях — под лестницу и шахты, продухи —
 // во фронтонах
 const voids = count('IFCRELVOIDSELEMENT');
-if (voids !== opens + holes + vents) errs.push(`проёмов ${opens} + ${holes} в перекрытиях + ${vents} продухов, вычитаний ${voids}`);
+if (voids !== opens + holes + vents + rholes)
+  errs.push(`проёмов ${opens} + ${holes} в перекрытиях + ${vents} продухов + ${rholes} проходов кровли, вычитаний ${voids}`);
 const fills = count('IFCRELFILLSELEMENT');
 const leaves = count('IFCDOOR') + count('IFCWINDOW');
 if (fills !== leaves) errs.push(`заполнений ${leaves}, связей с проёмами ${fills}`);
@@ -190,6 +192,10 @@ for (const L of house.levels) {
   ];
   for (const [r, key] of q) expect.set(key, [r.x + r.w / 2, S.h - (r.y + r.h / 2)]);
 }
+// проходы шахт сквозь скаты
+if (house.roof)
+  for (const h of roofHoles(house))
+    expect.set(h.id, [h.x + h.w / 2, S.h - (h.y + h.h / 2)]);
 // продухи фронтонов: посадка идёт от начала профиля вдоль торца
 if (house.roof) {
   const g = roofGeom(house);
@@ -211,7 +217,8 @@ for (const [n, e] of ents) {
   const d = Math.hypot(w.x - want[0], w.y - want[1]);
   if (d > 1) errs.push(`проём ${id} стоит в ${Math.round(w.x)},${Math.round(w.y)}, по плану ${want[0]},${want[1]} — мимо на ${Math.round(d)} мм`);
 }
-if (checked !== opens + holes + vents) errs.push(`проверено проёмов ${checked} из ${opens + holes + vents}`);
+if (checked !== opens + holes + vents + rholes)
+  errs.push(`проверено проёмов ${checked} из ${opens + holes + vents + rholes}`);
 
 // 7. Лестница ходится ногами. Ступени пишутся телами в одном представлении,
 // и разъехавшийся марш выглядит на списке сущностей ровно так же, как
@@ -367,8 +374,9 @@ for (const q of porches) {
   for (let i = 0; i < want.length; i++)
     if (Math.abs(got[i] - want[i]) > 1)
       errs.push(`крыльцо ${q.id}: ступень ${i + 1} на ${got[i]}, по расчёту ${want[i]}`);
-  if (got.length && Math.abs(got[got.length - 1] - q.ground) > 1)
-    errs.push(`крыльцо ${q.id}: нижняя ступень на ${got[got.length - 1]}, земля на ${q.ground}`);
+  // нижняя проступь на один подъём выше земли: последний шаг делается с грунта
+  if (got.length && Math.abs(got[got.length - 1] - (q.ground + q.rise)) > 1)
+    errs.push(`крыльцо ${q.id}: нижняя ступень на ${got[got.length - 1]}, земля ${q.ground} плюс подъём ${q.rise}`);
 }
 
 const kb = (text.length / 1024).toFixed(0);

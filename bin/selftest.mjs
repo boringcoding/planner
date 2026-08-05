@@ -268,7 +268,26 @@ const CASES = [
     h => { h.levels.forEach(L => { if (L.stair) L.stair.tread = 320; }); }],
 
   ['перекрытие давит на марш', /над маршем \d+ мм/,
-    h => { lvl(h, 'first').clear = 1900; }],
+    h => { lvl(h, 'first').floorToFloor = 4400; }],
+
+  ['отметки уровней разъехались', /отметки разъехались/,
+    h => { lvl(h, 'second').base = 3400; }],
+
+  ['ворота разной ширины при равных полях', /ворота не зеркальны/,
+    h => { const g = lvl(h, 'first').windows.find(x => x.id === 'first.g1');
+           const g2 = lvl(h, 'first').windows.find(x => x.id === 'first.g2');
+           g.b += 200; g2.a += 200; }],
+
+  ['окно над площадкой без ограждения', /над полом на отметке .* нужно 900/,
+    h => { delete lvl(h, 'first').windows.find(x => x.id === 'first.g11').guard; }],
+
+  ['записи лестницы разъехались по проступи', /лестница: tread .* расходится/,
+    h => { lvl(h, 'second').stair.tread = 300; }],
+
+  ['слоёная стенка без огнестойкости', /не помечена противопожарной/,
+    h => { const w = lvl(h, 'first').walls.find(x => x.fire);
+           delete w.fire; w.h = 125;
+           lvl(h, 'first').walls.push({ ...w, id: 'first.w9', y: w.y + 125 }); }],
 
   ['марш без ограждения', /ограждение марша/,
     h => { delete lvl(h, 'first').stair.rail; }],
@@ -301,7 +320,7 @@ const CASES = [
     h => { lvl(h, 'second').clear = 2300;
            lvl(h, 'second').windows.forEach(w => { if ((w.sill || 0) + w.hz > 2300) w.sill = 2300 - w.hz; }); }],
 
-  ['низкое окно этажа без ограждения', /подоконник \d+ на отметке .* нужно 900/,
+  ['низкое окно этажа без ограждения', /подоконник \d+ над полом .* нужно 900/,
     h => { delete lvl(h, 'second').windows.find(w => w.pano).guard; }],
 
   ['настил со ступенями без ограждения', /ограждение веранды/,

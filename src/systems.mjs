@@ -51,9 +51,14 @@ export function place(house, p) {
   return q && { x: q.x, y: q.y, level: L, room: q.room, face: q.face };
 }
 
-// этажный узел: на уровне источника — сам источник, выше и ниже — стояк
-export function node(house, sys, levelId) {
+// этажный узел: на уровне источника — сам источник, выше и ниже — стояк.
+// Воздух — исключение: его узел не стояк отопления, а вентшахта уровня
+export function node(house, sys, levelId, kind) {
   const L = house.levels.find(l => l.id === levelId);
+  if (AIR.has(kind)) {
+    const d = (L.ducts || [])[0];
+    if (d) return { x: d.x + d.w / 2, y: d.y + d.h / 2, z: runZ(sys, L, kind), level: L };
+  }
   if (levelId === sys.source.level) return { x: sys.source.x, y: sys.source.y, z: sys.source.z, level: L, main: true };
   return { x: sys.vertical.x, y: sys.vertical.y, z: runZ(sys, L), level: L };
 }
@@ -99,7 +104,7 @@ export function trunk(house, sys, levelId) {
 // шлейф или луч от этажного узла через точки группы
 export function groupRun(house, sys, points) {
   const L = house.levels.find(l => l.id === points[0].level);
-  const n = node(house, sys, L.id);
+  const n = node(house, sys, L.id, points[0].kind);
   const rz = runZ(sys, L, points[0].kind);
   const rest = points.map(p => ({ p, at: place(house, p) })).filter(x => x.at);
   if (!rest.length) return { level: L, points, via: [], len: 0 };   // сажать некуда — это ловит правило
@@ -206,7 +211,7 @@ export function bill(house, sys) {
 export function reach(house, sys, p) {
   const at = place(house, p);
   if (!at) return null;
-  return pathOnLevel(at.level, node(house, sys, at.level.id), at);
+  return pathOnLevel(at.level, node(house, sys, at.level.id, p.kind), at);
 }
 
 export const byLevel = (sys, id) => sys.points.filter(p => p.level === id);

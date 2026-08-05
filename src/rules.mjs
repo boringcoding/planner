@@ -390,6 +390,11 @@ export function check(house, brief) {
       if (house.levels[i + 1]) {
         const head = house.levels[i + 1].base - L.base - (L.floorToFloor - L.clear);
         if (head < LIMITS.stairHead) E(L, `над маршем ${head} мм до перекрытия, нужно ${LIMITS.stairHead}`);
+        // 13в. отметки стыкуются: base следующего уровня обязан быть ровно
+        // base + floorToFloor этого — иначе высоты по дому врут молча
+        const drift = house.levels[i + 1].base - L.base - L.floorToFloor;
+        if (drift !== 0)
+          E(L, `отметки разъехались: base «${house.levels[i + 1].title}» ушёл на ${drift} от base + floorToFloor`);
         // 13б. марш с перепадом в этаж без ограждения — падение, а не спуск
         if (!st.rail || st.rail < LIMITS.guardRail)
           E(L, `ограждение марша ${st.rail || 'не задано'}, нужно ${LIMITS.guardRail}`);
@@ -462,12 +467,35 @@ export function check(house, brief) {
         if (other && !o.fire)
           E(L, `дверь ${o.x},${o.y} из гаража в «${other.name}» не помечена противопожарной`);
       }
-      // стена между гаражом и домом — противопожарная по всей длине
-      for (const w of walls) {
-        if (w.fire) continue;
-        const grown = grow(w, 60);
-        if (overlap(grown, garage) > 1000 && rooms.some(rm => rm !== garage && overlap(grown, rm) > 1000))
-          E(L, `стена ${w.id} между гаражом и домом не помечена противопожарной`);
+      // стена между гаражом и домом — противопожарная по всей длине и толщине.
+      // Проверяется разделение, а не отдельная стена: слоёная стенка из двух
+      // записей без метки не прячется за соседкой, а торец перпендикулярной
+      // стены, доведённой до гаража, не ловит ложняк — его накрывает соседняя
+      const fireWalls = walls.filter(w => w.fire);
+      for (const rm of rooms) {
+        if (rm === garage) continue;
+        // полоса между гаражом и помещением: проекции пересекаются по одной
+        // оси, по другой между гранями зазор не толще стены
+        const ix = inter(garage, rm);
+        let band = null;
+        if (ix.w > 0 && ix.h <= 0 && -ix.h <= 400) band = rect(ix.x, Math.min(garage.y + garage.h, rm.y + rm.h), ix.w, -ix.h);
+        if (ix.h > 0 && ix.w <= 0 && -ix.w <= 400) band = rect(Math.min(garage.x + garage.w, rm.x + rm.w), ix.y, -ix.w, ix.h);
+        if (!band || area(band) === 0) continue;
+        // разрез полосы гранями противопожарных стен: каждая клетка обязана
+        // попасть в одну из них
+        const cuts = k => [...new Set([band[k.a], band[k.a] + band[k.s],
+        ...fireWalls.flatMap(w => [w[k.a], w[k.a] + w[k.s]])])]
+          .filter(v => v >= band[k.a] && v <= band[k.a] + band[k.s]).sort((a, b) => a - b);
+        const xs = cuts({ a: 'x', s: 'w' }), ys = cuts({ a: 'y', s: 'h' });
+        let bad = null;
+        for (let i = 0; i + 1 < xs.length && !bad; i++)
+          for (let j = 0; j + 1 < ys.length && !bad; j++) {
+            const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+            if ((xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]) < 100) continue;
+            if (!fireWalls.some(w => cx > w.x && cx < w.x + w.w && cy > w.y && cy < w.y + w.h))
+              bad = `${Math.round(xs[i])},${Math.round(ys[j])}`;
+          }
+        if (bad) E(L, `стена между гаражом и «${rm.name}» у ${bad} не помечена противопожарной`);
       }
     }
 
@@ -653,10 +681,18 @@ export function check(house, brief) {
       const host = rooms.find(r => overlap(windowBand(w, S, 300), r) > 1000);
       if (host && host.tag === 'wet' && sill < LIMITS.sillWet)
         E(L, `окно ${w.id} в «${host.name}»: подоконник ${sill} ниже ${LIMITS.sillWet}`);
-      // 27г. подоконник ниже 600 на этаже выше первого — за стеклом обрыв
-      // в этаж; такому окну нужно ограждение, и метка pano его не отменяет
-      if (L.base > 0 && sill < LIMITS.lowSill && (!w.guard || w.guard < LIMITS.guardRail))
-        E(L, `окно ${w.id}: подоконник ${sill} на отметке ${L.base}, ограждение ${w.guard || 'не задано'} — нужно ${LIMITS.guardRail}`);
+      // 27г. подоконник ниже 600 над полом, на котором стоят, — за стеклом
+      // обрыв; окно над площадкой лестницы меряется от площадки, а не от
+      // отметки этажа, и первый этаж тут не исключение
+      {
+        let floor = 0;
+        if (L.stair && overlap(windowBand(w, S, 300), stairLanding(L.stair)) > 1000
+          && house.levels[house.levels.indexOf(L) + 1])
+          floor = Math.round((house.levels[house.levels.indexOf(L) + 1].base - L.base) / 2);
+        const drop = L.base + floor;                       // отметка пола под окном
+        if (drop > 0 && sill - floor < LIMITS.lowSill && (!w.guard || w.guard < LIMITS.guardRail))
+          E(L, `окно ${w.id}: подоконник ${sill - floor} над полом на отметке ${drop}, ограждение ${w.guard || 'не задано'} — нужно ${LIMITS.guardRail}`);
+      }
     }
 
     // 26г. простенок между наружным проёмом и внутренней стеной, примыкающей
@@ -984,11 +1020,15 @@ export function check(house, brief) {
       // 35б. парные ворота: равные поля от углов фасада
       const gates = items.filter(x => x.w.kind === 'gate');
       if (gates.length === 2) {
+        // зеркалятся оба края обеих створок: равные поля при створках разной
+        // ширины — всё ещё кривой фасад
         const len = side === 'S' || side === 'N' ? S.w : S.h;
-        const m1 = Math.min(gates[0].w.a, gates[1].w.a);
-        const m2 = len - Math.max(gates[0].w.b, gates[1].w.b);
-        if (m1 !== m2 && Math.abs(m1 - m2) < LIMITS.facadeAxisSnap)
-          errs.push(`фасад ${side}: поля от углов до ворот ${m1} и ${m2} — почти симметрично хуже, чем симметрично`);
+        const [g1, g2] = gates[0].w.a <= gates[1].w.a ? [gates[0].w, gates[1].w] : [gates[1].w, gates[0].w];
+        for (const d of [Math.abs(g1.a - (len - g2.b)), Math.abs(g1.b - (len - g2.a))])
+          if (d >= 1 && d < LIMITS.facadeAxisSnap) {
+            errs.push(`фасад ${side}: ворота не зеркальны — края разъехались на ${Math.round(d)}, почти симметрично хуже, чем симметрично`);
+            break;
+          }
       }
       // 35в. окно почти по центру помещения
       for (const it of items) {
@@ -1026,6 +1066,16 @@ export function check(house, brief) {
     for (let i = 1; i < shafts.length; i++)
       if (!same(shafts[i - 1], shafts[i]))
         errs.push(`шахта ${what} не совпадает между уровнями ${i} и ${i + 1}`);
+  }
+  // это одна лестница, записанная трижды: разъехаться не могут не только
+  // шахты, но и проступь, площадка, торец входа и ограждение. Число подъёмов
+  // своё у каждого марша — этажи разной высоты
+  {
+    const stairs = house.levels.map(L => L.stair).filter(Boolean);
+    for (let i = 1; i < stairs.length; i++)
+      for (const k of ['tread', 'landing', 'entry', 'rail'])
+        if (stairs[i - 1][k] !== stairs[i][k])
+          errs.push(`лестница: ${k} = ${stairs[i][k]} на уровне ${i + 1} расходится с ${stairs[i - 1][k]} ниже`);
   }
   for (const [what, key] of [['дымоходов', 'flues'], ['вентшахт', 'ducts']])
     for (let i = 1; i < house.levels.length; i++) {
