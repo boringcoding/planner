@@ -13,7 +13,7 @@
 // ли геометрии, которую смотрелка по своим же правилам никому не покажет.
 
 import fs from 'node:fs';
-import { roofGeom, verandaGeom, pitGeom } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, groundGeom } from '../src/roof.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -58,6 +58,7 @@ const GROUPS = [
   ['outside', ['IFCPILE', 'IFCCOLUMN', 'IFCPLATE', 'IFCBEAM', 'IFCRAILING']],
   ['furniture', ['IFCFURNISHINGELEMENT', 'IFCFURNITURE']],
   ['shafts', ['IFCBUILDINGELEMENTPROXY']],
+  ['site', ['IFCGEOGRAPHICELEMENT']],
   ['spaces', ['IFCSPACE']]
 ];
 
@@ -191,7 +192,7 @@ if (lost.size)
     errs.push(`${what}: ${Math.round(tri)} треугольников не привязаны к этажу — смотрелка их не покажет`);
 
 const need = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'furniture', 'shafts',
-  'eom', 'vk', 'ov', 'ss'];
+  'site', 'eom', 'vk', 'ov', 'ss'];
 for (const k of need)
   if (!stat.has(k) || stat.get(k).tri === 0) errs.push(`слой «${k}» пуст: геометрии нет вовсе`);
 if (V && (!stat.has('outside') || stat.get('outside').tri === 0))
@@ -236,8 +237,10 @@ if (house.roof) {
   }
 }
 
-// Низ — подошва сваи веранды либо плита основания
-const bottom = Math.min(V ? V.pileBottom : 0, house.levels[0].base - 400);
+// Низ — грунт площадки, а под ним ничего: сваи и плита в земле
+const grounds = groundGeom(house);
+const bottom = Math.min(V ? V.pileBottom : 0, house.levels[0].base - 400,
+  ...grounds.map(q => q.bottom));
 if (Math.abs(box.mn[2] - bottom) > 5)
   errs.push(`низ модели ${Math.round(box.mn[2])}, ожидалось ${bottom}`);
 
@@ -255,7 +258,7 @@ if (box.mx[0] < planX[1] - 5) errs.push(`модель кончается на x 
 const SOLID = ['IFCWALL', 'IFCSLAB', 'IFCDOOR', 'IFCWINDOW', 'IFCSTAIR', 'IFCSTAIRFLIGHT',
   'IFCFURNISHINGELEMENT', 'IFCBUILDINGELEMENTPROXY', 'IFCBEAM', 'IFCPILE', 'IFCCOLUMN',
   'IFCPLATE', 'IFCCHIMNEY', 'IFCRAILING', 'IFCPIPESEGMENT', 'IFCDUCTSEGMENT',
-  'IFCCABLECARRIERSEGMENT'];
+  'IFCCABLECARRIERSEGMENT', 'IFCGEOGRAPHICELEMENT'];
 for (const t of SOLID) {
   const code = WebIFC[t];
   if (typeof code !== 'number') { errs.push(`движок не знает типа ${t}`); continue; }

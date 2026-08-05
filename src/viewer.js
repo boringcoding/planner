@@ -24,12 +24,14 @@
     ['outside', 'Веранда и крыльцо', ['IFCPILE', 'IFCCOLUMN', 'IFCPLATE', 'IFCBEAM', 'IFCRAILING']],
     ['furniture', 'Мебель', ['IFCFURNISHINGELEMENT', 'IFCFURNITURE']],
     ['shafts', 'Шахты', ['IFCBUILDINGELEMENTPROXY']],
+    ['site', 'Участок', ['IFCGEOGRAPHICELEMENT']],
     ['spaces', 'Помещения', ['IFCSPACE']]
   ];
   const COLOR = {
     walls: [0.82, 0.81, 0.78], slabs: [0.70, 0.69, 0.66], roof: [0.44, 0.45, 0.47],
     openings: [0.42, 0.55, 0.63], stairs: [0.60, 0.59, 0.56], outside: [0.66, 0.62, 0.55],
     furniture: [0.75, 0.74, 0.70], shafts: [0.52, 0.51, 0.49],
+    site: [0.56, 0.58, 0.48],
     spaces: [0.90, 0.93, 0.90], eom: [0.66, 0.46, 0.16], vk: [0.18, 0.42, 0.55],
     ov: [0.70, 0.25, 0.18], ss: [0.25, 0.47, 0.35]
   };
@@ -361,7 +363,7 @@
       // но выключить его нечем: кровля так и приехала на страницу без фишки.
       // Поэтому список только сортирует, а не решает, чему быть
       const order = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'outside',
-        'furniture', 'shafts', 'spaces', 'eom', 'vk', 'ov', 'ss'];
+        'furniture', 'shafts', 'site', 'spaces', 'eom', 'vk', 'ov', 'ss'];
       const sorted = [...groups].sort((a, b) =>
         (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
       chips('слои', sorted.map(g => [g, label(g),

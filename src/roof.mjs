@@ -182,6 +182,46 @@ export function blindGeom(house) {
   return strips.map(s => ({ ...s, top: ground, th }));
 }
 
+// ───────────────────────────────────────────────────────────────── грунт
+// Дом стоит в земле, а не в пустоте: цоколь заглублён, наружу торчат
+// 300 мм, сваи веранды и фундаменты труб уходят в грунт. Без тела земли
+// модель читается трёхэтажной коробкой на ходулях — и так она и уехала
+// на страницу. Площадка — полосы вокруг пятна дома с ямой приямка,
+// отступ по западу — до границы участка, по остальным сторонам столько же.
+export function groundGeom(house) {
+  const S = house.shell;
+  const ground = house.site.ground ?? -300;
+  const m = (house.project && house.project.plot && house.project.plot.setback) || 3000;
+  const bottom = ground - 3300;                             // ниже подошвы свай
+  const strips = [
+    { x: -m, y: -m, w: S.w + 2 * m, h: m },                 // юг
+    { x: -m, y: S.h, w: S.w + 2 * m, h: m },                // север
+    { x: -m, y: 0, w: m, h: S.h },                          // запад
+    { x: S.w, y: 0, w: m, h: S.h }                          // восток
+  ];
+  // яма приямка: свет короба открыт до дна, грунт подходит к стенкам снаружи
+  const out = [];
+  let n = 0;
+  for (const s of strips) {
+    let parts = [s];
+    for (const p of pitGeom(house)) {
+      const next = [];
+      for (const q of parts) {
+        const ix = Math.max(q.x, p.box.x), iy = Math.max(q.y, p.box.y);
+        const ix2 = Math.min(q.x + q.w, p.box.x + p.box.w), iy2 = Math.min(q.y + q.h, p.box.y + p.box.h);
+        if (ix >= ix2 || iy >= iy2) { next.push(q); continue; }
+        if (q.y < iy) next.push({ x: q.x, y: q.y, w: q.w, h: iy - q.y });
+        if (iy2 < q.y + q.h) next.push({ x: q.x, y: iy2, w: q.w, h: q.y + q.h - iy2 });
+        if (q.x < ix) next.push({ x: q.x, y: iy, w: ix - q.x, h: iy2 - iy });
+        if (ix2 < q.x + q.w) next.push({ x: ix2, y: iy, w: q.x + q.w - ix2, h: iy2 - iy });
+      }
+      parts = next;
+    }
+    for (const q of parts) out.push({ id: `site.ground${++n}`, ...q, top: ground, bottom });
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────── пандусы
 // Порог ворот выше земли — это съезд, а не «ворота в стене»: без пандуса
 // машина выезжает в обрыв 300 мм, и на фасаде это видно сразу

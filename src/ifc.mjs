@@ -63,7 +63,7 @@ const num = v => {
 };
 
 import { stairGeom } from './render.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom } from './roof.mjs';
 import { bill, runSegments3d, trunkSegments3d, KIND } from './systems.mjs';
 
 export function ifc(house, systems = [], opt = {}) {
@@ -197,6 +197,7 @@ export function ifc(house, systems = [], opt = {}) {
     gate: ['Ворота, сталь', [0.52, 0.54, 0.57]],
     metal: ['Сталь', [0.45, 0.46, 0.48]],
     stone: ['Бетон', [0.60, 0.59, 0.56]],
+    ground: ['Грунт', [0.56, 0.58, 0.48]],
     furn: ['Мебель', [0.75, 0.74, 0.70]],
     eom: ['ЭОМ', [0.66, 0.46, 0.16]],
     vk: ['ВК', [0.18, 0.42, 0.55]],
@@ -764,6 +765,19 @@ export function ifc(house, systems = [], opt = {}) {
     put(s.st, el);
     matOf('Железобетон', el);
     addProps(el, `ramp:${q.id}`, [['id', q.id], ['slope', Math.round(q.slope)], ['len', q.len]]);
+  }
+
+  // ---- грунт площадки -----------------------------------------------------
+  // Цоколь заглублён, и без тела земли дом выглядит трёхэтажной коробкой
+  // на ходулях. Грунт лежит на цокольном этаже — фильтр уровней смотрелки
+  // выключает его вместе с цоколем, и подземную часть можно разглядывать
+  for (const q of groundGeom(house)) {
+    const s0 = storeys[0];
+    const el = E('IFCGEOGRAPHICELEMENT', [G(`ground:${q.id}`), owner, str('Грунт площадки'), '$', '$',
+      place(s0.pl, q.x + q.w / 2, Y(q.y + q.h / 2), q.bottom - s0.lv.base),
+      bodyOf([paint(boxSolid(q.w, q.h, q.top - q.bottom), 'ground')]), str(q.id), '.TERRAIN.']);
+    put(s0.st, el);
+    matOf('Грунт', el);
   }
 
   // ---- отмостка -----------------------------------------------------------

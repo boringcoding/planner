@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import { ifc } from '../src/ifc.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles } from '../src/roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, gutterGeom, blindGeom, rampGeom, roofHoles, groundGeom } from '../src/roof.mjs';
 import { bill, runSegments3d } from '../src/systems.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
@@ -100,6 +100,7 @@ const want = [
   ['IFCRAILING', house.levels.reduce((s, L, i) => s
     + (L.stair && L.stair.rail && house.levels[i + 1] ? 1 : 0), 0)
     + (V && V.railSegs.length ? 1 : 0)],
+  ['IFCGEOGRAPHICELEMENT', groundGeom(house).length],
   ['IFCPIPESEGMENT', nSeg.IFCPIPESEGMENT],
   ['IFCDUCTSEGMENT', nSeg.IFCDUCTSEGMENT],
   ['IFCCABLECARRIERSEGMENT', nSeg.IFCCABLECARRIERSEGMENT]
