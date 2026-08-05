@@ -12,14 +12,18 @@
     "points": "node bin/genpoints.mjs",
     "shot": "node bin/shot.mjs",
     "site": "node bin/site.mjs",
-    "all": "npm run check && npm run selftest && npm run build && npm run ifc && npm run shot",
+    "all": "npm run check && npm run selftest && npm run build && npm run ifc && npm run model && npm run shot",
     "ifc": "node bin/ifc.mjs",
-    "cost": "node bin/cost.mjs"
+    "cost": "node bin/cost.mjs",
+    "model": "node bin/model.mjs",
+    "deploy": "npm run site && npm run model && npm run screen",
+    "screen": "node bin/screen.mjs"
   },
   "optionalDependencies": {
     "@resvg/resvg-js": "^2.6.2"
   },
   "devDependencies": {
+    "playwright-core": "^1.62.1",
     "web-ifc": "0.0.77"
   }
 }

@@ -13,15 +13,18 @@
   const TYPE_GROUP = [
     ['walls', 'Стены', ['IFCWALL', 'IFCWALLSTANDARDCASE']],
     ['slabs', 'Перекрытия', ['IFCSLAB']],
+    ['roof', 'Кровля', ['IFCROOF', 'IFCCHIMNEY']],
     ['openings', 'Двери и окна', ['IFCDOOR', 'IFCWINDOW']],
     ['stairs', 'Лестница', ['IFCSTAIR', 'IFCSTAIRFLIGHT']],
+    ['outside', 'Веранда и крыльцо', ['IFCPILE', 'IFCCOLUMN', 'IFCPLATE', 'IFCBEAM']],
     ['furniture', 'Мебель', ['IFCFURNISHINGELEMENT', 'IFCFURNITURE']],
     ['shafts', 'Шахты', ['IFCBUILDINGELEMENTPROXY']],
     ['spaces', 'Помещения', ['IFCSPACE']]
   ];
   const COLOR = {
-    walls: [0.82, 0.81, 0.78], slabs: [0.70, 0.69, 0.66], openings: [0.42, 0.55, 0.63],
-    stairs: [0.60, 0.59, 0.56], furniture: [0.75, 0.74, 0.70], shafts: [0.52, 0.51, 0.49],
+    walls: [0.82, 0.81, 0.78], slabs: [0.70, 0.69, 0.66], roof: [0.44, 0.45, 0.47],
+    openings: [0.42, 0.55, 0.63], stairs: [0.60, 0.59, 0.56], outside: [0.66, 0.62, 0.55],
+    furniture: [0.75, 0.74, 0.70], shafts: [0.52, 0.51, 0.49],
     spaces: [0.90, 0.93, 0.90], eom: [0.66, 0.46, 0.16], vk: [0.18, 0.42, 0.55],
     ov: [0.70, 0.25, 0.18], ss: [0.25, 0.47, 0.35]
   };
@@ -104,10 +107,28 @@
         const s = r.RelatingStructure.value;
         for (const e of r.RelatedElements) storeyOf.set(e.value, s);
       }
+      // Сборка (IfcRoof) стоит на этаже, а геометрию несут её части — скаты.
+      // Часть в пространственной структуре не лежит и не должна: по IFC она
+      // принадлежит сборке. Раньше смотрелка искала этаж только по прямому
+      // вхождению, части получали этаж 0, и фильтр уровней прятал их всегда —
+      // крыша была в файле и не была на экране. Этаж наследуется от родителя
+      const parentOf = new Map();
       for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELAGGREGATES))) {
         const r = api.GetLine(model, rid);
-        if (!storeys.some(s => s.id === r.RelatingObject.value)) continue;
-        for (const e of r.RelatedObjects) storeyOf.set(e.value, r.RelatingObject.value);
+        const owner = r.RelatingObject.value;
+        if (storeys.some(s => s.id === owner))
+          for (const e of r.RelatedObjects) storeyOf.set(e.value, owner);
+        else
+          for (const e of r.RelatedObjects) parentOf.set(e.value, owner);
+      }
+      const storeyUp = (e, depth = 0) => {
+        if (storeyOf.has(e)) return storeyOf.get(e);
+        const p = parentOf.get(e);
+        return p == null || depth > 8 ? null : storeyUp(p, depth + 1);
+      };
+      for (const e of parentOf.keys()) {
+        const s = storeyUp(e);
+        if (s != null) storeyOf.set(e, s);
       }
       for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELASSIGNSTOGROUP))) {
         const r = api.GetLine(model, rid);
@@ -125,6 +146,16 @@
           if (typeof code !== 'number') continue;
           for (const e of ids(api.GetLineIDsWithType(model, code))) typeKey.set(e, key);
         }
+      // скат кровли — тоже IfcSlab, но выключать его надо вместе с кровлей,
+      // а не вместе с перекрытиями: части сборки идут в слой сборки
+      for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCROOF)))
+        for (const [child, owner] of parentOf) if (owner === rid) typeKey.set(child, 'roof');
+      // балка бывает и мауэрлатом, и обвязкой веранды: по типу их не различить,
+      // различает метка элемента — она же идентификатор из data/house.json
+      for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCBEAM))) {
+        const t = api.GetLine(model, e).Tag;
+        if (t && String(t.value).startsWith('roof.')) typeKey.set(e, 'roof');
+      }
 
       say('собираю геометрию…');
       const buckets = new Map();          // "группа|этаж" -> {pos,nrm,idx}
@@ -219,8 +250,14 @@
         }
         panel.appendChild(wrap);
       };
-      const order = ['walls', 'slabs', 'openings', 'stairs', 'furniture', 'shafts', 'spaces', 'eom', 'vk', 'ov', 'ss'];
-      chips('слои', order.filter(g => groups.includes(g)).map(g => [g, label(g)]), on,
+      // Порядок фишек задан руками, и слой, забытый в этом списке, рисуется,
+      // но выключить его нечем: кровля так и приехала на страницу без фишки.
+      // Поэтому список только сортирует, а не решает, чему быть
+      const order = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'outside',
+        'furniture', 'shafts', 'spaces', 'eom', 'vk', 'ov', 'ss'];
+      const sorted = [...groups].sort((a, b) =>
+        (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+      chips('слои', sorted.map(g => [g, label(g)]), on,
         g => `rgb(${(COLOR[g] || [0.5, 0.5, 0.5]).map(v => Math.round(v * 255)).join(',')})`);
       chips('уровни', storeys.map(s => [s.id, s.name]), levelOn);
 
