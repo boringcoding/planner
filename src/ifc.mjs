@@ -133,11 +133,11 @@ export function ifc(house, systems = [], opt = {}) {
   const site = E('IFCSITE', [G('site'), owner, str('Участок'), '$', '$', sitePl, '$', '$', '.ELEMENT.', '$', '$', '$', '$', '$']);
   const bldPl = E('IFCLOCALPLACEMENT', [sitePl, AX0]);
   const building = E('IFCBUILDING', [G('building'), owner, str(house.project.title), '$', '$', bldPl, '$', '$', '.ELEMENT.', '$', '$', '$']);
-  // времянка — второе здание на том же участке, со своим этажом: смотрелка
-  // получает её отдельным уровнем, ArchiCAD — отдельным корпусом
+  // Времянка живёт в том же здании, на этаже с отметкой 0.000. Вторым
+  // IfcBuilding она уже уезжала — и ArchiCAD, раскладывающий этажи по
+  // отметкам, молча её терял. Слоем «Времянка» её делает метка plot.t*,
+  // а не пространственная структура
   const PG = plotGeom(house);
-  const bldPl2 = PG && PG.temp ? E('IFCLOCALPLACEMENT', [sitePl, AX0]) : null;
-  const building2 = bldPl2 && E('IFCBUILDING', [G('building:temp'), owner, str('Времянка'), '$', '$', bldPl2, '$', '$', '.ELEMENT.', '$', '$', '$']);
 
   // точка и оси в координатах этажа
   const pt3 = (x, y, z) => E('IFCCARTESIANPOINT', [L([num(x), num(y), num(z)])]);
@@ -255,18 +255,10 @@ export function ifc(house, systems = [], opt = {}) {
     addProps(st, `storey:${lv.id}`, [['id', lv.id], ['clear', lv.clear], ['floorToFloor', lv.floorToFloor]]);
   }
   rels.push(E('IFCRELAGGREGATES', [G('agg:project'), owner, '$', '$', project, L([site])]));
-  rels.push(E('IFCRELAGGREGATES', [G('agg:site'), owner, '$', '$', site,
-    L(building2 ? [building, building2] : [building])]));
+  rels.push(E('IFCRELAGGREGATES', [G('agg:site'), owner, '$', '$', site, L([building])]));
   rels.push(E('IFCRELAGGREGATES', [G('agg:building'), owner, '$', '$', building, L(storeys.map(s => s.st))]));
-  // этаж времянки: base 0.000, той же сеткой координат — зеркало Y общее
-  let tempStorey = null;
-  if (building2) {
-    const T = PG.temp;
-    const pl = place(bldPl2, 0, 0, 0);
-    const st = E('IFCBUILDINGSTOREY', [G('storey:temp'), owner, str('Времянка'), '$', '$', pl, '$', '$', '.ELEMENT.', '0.']);
-    tempStorey = { lv: { id: 'temp', title: 'Времянка', base: 0, clear: T.clear ?? 2700 }, st, pl };
-    rels.push(E('IFCRELAGGREGATES', [G('agg:building:temp'), owner, '$', '$', building2, L([st])]));
-  }
+  // времянка кладётся на этаж с отметкой 0.000 основного здания
+  const tempStorey = PG && PG.temp ? storeys.find(s => s.lv.base === 0) : null;
 
   // ---- стены -----------------------------------------------------------
   // Стена задаётся осью и толщиной: так её принимают как стену, а не как

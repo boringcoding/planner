@@ -75,8 +75,8 @@ export const LIMITS = {
   fireGapStone: 6000,      // разрыв между двумя несгораемыми домами (СП 4.13130)
   fireGapWood: 10000,      // камень — дерево: деревянной времянке тут не встать
   septicToHouse: 5000,     // от станции очистки до жилого дома
-  septicToBorder: 1000,    // до границы соседнего участка
-  septicToRed: 5000,       // до красной линии
+  septicToBorder: 1000,    // до границ участка, включая уличную
+  septicService: 5000,     // не дальше этого от красной линии: обслуживание с улицы
   gateW: 3500,             // въездные ворота: проезд пожарной машины
   wicketW: 1000,           // калитка
   gateAxisSnap: 150        // ось въезда против оси гаражного фронта
@@ -1225,19 +1225,20 @@ export function check(house, brief) {
         if (!['S', 'W'].includes(temp.door.side))
           errs.push(`дверь времянки выходит на сторону ${temp.door.side} — к забору, а не к дому`);
       }
-      // 38в. септик: пять метров до каждого жилого дома, отступ от границ,
-      // от красной линии — и не под проездом или дорожкой: его обслуживают
+      // 38в. септик: пять метров до каждого жилого дома, отступ от всех
+      // границ — и близко к уличному забору: станцию обслуживают с улицы,
+      // не загоняя машину на участок. Уползла в глубину — шланг не дотянется
       if (septic) {
         const q = septic.box;
         if (dist(houseBox, q) < LIMITS.septicToHouse)
           errs.push(`септик в ${Math.round(dist(houseBox, q))} от дома, норма ${LIMITS.septicToHouse}`);
         if (temp && dist(temp.box, q) < LIMITS.septicToHouse)
           errs.push(`септик в ${Math.round(dist(temp.box, q))} от времянки, норма ${LIMITS.septicToHouse}`);
-        const toBorder = Math.min(q.x - lot.x0, lot.x1 - q.x - q.w, lot.y1 - q.y - q.h);
+        const toBorder = Math.min(q.x - lot.x0, lot.x1 - q.x - q.w, lot.y1 - q.y - q.h, q.y - lot.y0);
         if (toBorder < LIMITS.septicToBorder)
           errs.push(`септик в ${Math.round(toBorder)} от границы участка, норма ${LIMITS.septicToBorder}`);
-        if (q.y - lot.y0 < LIMITS.septicToRed)
-          errs.push(`септик в ${Math.round(q.y - lot.y0)} от красной линии, норма ${LIMITS.septicToRed}`);
+        if (q.y - lot.y0 > LIMITS.septicService)
+          errs.push(`септик в ${Math.round(q.y - lot.y0)} от красной линии — обслуживать с улицы можно с ${LIMITS.septicService}`);
         for (const p of [drive, ...paths].filter(Boolean))
           if (overlap(q, p) > 0) errs.push(`септик под покрытием ${p.id} — крышку не открыть`);
       } else errs.push('септика нет: канализации некуда деваться, центральной сети на улице нет');

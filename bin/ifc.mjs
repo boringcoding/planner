@@ -103,8 +103,8 @@ const wells = systems.flatMap(sys => feedsGeom(house, sys)).flatMap(f => f.wells
 const want = [
   ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
   ['IFCFURNISHINGELEMENT', furn],
-  ['IFCBUILDINGSTOREY', house.levels.length + (PG && PG.temp ? 1 : 0)],
-  ['IFCBUILDING', 1 + (PG && PG.temp ? 1 : 0)],
+  ['IFCBUILDINGSTOREY', house.levels.length],
+  ['IFCBUILDING', 1],
   ['IFCSYSTEM', systems.length],
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],

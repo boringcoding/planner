@@ -223,17 +223,20 @@ export function feedsGeom(house, sys) {
       const x0 = main ? main.at : f.enter.at;
       const [laneX, laneY] = f.kind === 'water' ? [lanes.waterX, lanes.waterY] : [lanes.powerX, lanes.powerY];
       const end = tempPt(f.enter.side, f.enter.at);
+      // вода — просто труба: ответвление тройником в грунте, без колодца
       const start = f.kind === 'water' && lanes.tapX != null
         ? { x: x0, y: laneY }                         // тройник на магистрали от угла
         : { x: x0, y: lot.y0 };
       xy = [start, { x: x0, y: laneY }, { x: laneX, y: laneY }, { x: laneX, y: end.y }, end];
-      if (f.kind === 'water' && lanes.tapX != null)
-        wells = [{ id: `${f.id}.w1`, x: x0, y: laneY, d: 700 }];
     } else if (f.from === 'septic' && Q) {
       // напорный сброс очищенной воды: от станции к кювету улицы
       xy = [{ x: lanes.relX, y: Q.y }, { x: lanes.relX, y: lot.y0 }];
     } else if (f.to === 'septic' && Q) {
-      const inY = Q.y + Q.h / 2;
+      // септик стоит у уличного забора — его обслуживают с улицы, не загоняя
+      // машину. Самотёк собирается в коридоре, у станции перед домом линия
+      // соединения проходит севернее её корпуса и входит с северного торца
+      const front = Q.y + Q.h <= 0;
+      const inY = front ? Q.y + Q.h + 1000 : Q.y + Q.h / 2;
       if (f.exit && T) {
         // выпуск времянки: к коридору самотёка и на юг, в общий колодец
         const p0 = tempPt(f.exit.side, f.exit.at);
@@ -245,7 +248,11 @@ export function feedsGeom(house, sys) {
           : { id: `${f.id}.w1`, x: p0.x, y: inY, d: 425 }];
       } else {
         const p0 = wallPt(f.side, f.at);
-        xy = [p0, { x: lanes.sewerX, y: p0.y }, { x: lanes.sewerX, y: inY }, { x: Q.x, y: inY }];
+        const inX = Q.x + 300;
+        xy = front
+          ? [p0, { x: lanes.sewerX, y: p0.y }, { x: lanes.sewerX, y: inY },
+          { x: inX, y: inY }, { x: inX, y: Q.y + Q.h }]
+          : [p0, { x: lanes.sewerX, y: p0.y }, { x: lanes.sewerX, y: inY }, { x: Q.x, y: inY }];
         // колодцы на поворотах самотёка; второй — общий с веткой времянки
         wells = [{ id: `${f.id}.w1`, x: lanes.sewerX, y: p0.y, d: 425 },
         { id: `${f.id}.w2`, x: lanes.sewerX, y: inY, d: 425 }];
@@ -253,16 +260,15 @@ export function feedsGeom(house, sys) {
     } else {
       const p0 = wallPt(f.side, f.at);
       if (f.kind === 'water' && lanes.tapX != null && f.side === 'S') {
-        // уличная магистраль подходит к углу ЮЗ-ЮВ: от колодца врезки
-        // фронтальной полосой до точки ввода и перпендикулярно в дом
+        // уличная магистраль подходит к углу ЮЗ-ЮВ: труба входит на участок
+        // у угла и идёт фронтальной полосой до точки ввода — колодец не наш,
+        // врезка остаётся на улице
         xy = [p0, { x: f.at, y: lanes.waterY }, { x: lanes.tapX, y: lanes.waterY }, { x: lanes.tapX, y: lot.y0 }];
-        wells = [{ id: `${f.id}.w1`, x: lanes.tapX, y: lot.y0 + 700, d: 1000 }];
       } else {
         // прямой ввод от красной линии
         const p1 = f.side === 'S' ? { x: f.at, y: lot.y0 } : f.side === 'N' ? { x: f.at, y: lot.y1 }
           : f.side === 'W' ? { x: lot.x0, y: f.at } : { x: lot.x1, y: f.at };
         xy = [p0, p1];
-        if (f.kind === 'water') wells = [{ id: `${f.id}.w1`, x: p1.x, y: lot.y0 + 700, d: 1000 }];
       }
     }
     xy = xy.filter((p, i) => !i || p.x !== xy[i - 1].x || p.y !== xy[i - 1].y);

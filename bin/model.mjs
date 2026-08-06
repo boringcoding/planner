@@ -60,6 +60,7 @@ const GROUPS = [
   ['furniture', ['IFCFURNISHINGELEMENT', 'IFCFURNITURE']],
   ['shafts', ['IFCBUILDINGELEMENTPROXY']],
   ['site', ['IFCGEOGRAPHICELEMENT']],
+  ['temp', []],                          // времянка: набирается меткой plot.t*
   ['spaces', ['IFCSPACE']]
 ];
 
@@ -97,12 +98,14 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCRAILING))) {
   const t = api.GetLine(model, e).Tag;
   if (t && String(t.value).endsWith('.srail')) groupOf.set(e, 'stairs');
 }
-// забор, ворота и покрытия — слой участка, как грунт: различает метка.
-// Времянка (plot.temp*) остаётся в обычных слоях — это здание
-for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE'])
+// забор, ворота и покрытия — слой участка, как грунт; времянка целиком —
+// свой слой: оба различаются меткой, а не типом, парой со смотрелкой
+for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW'])
   for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
     const t = api.GetLine(model, e).Tag;
-    if (t && /^plot\.(fence|gate|wicket|drive|walk)/.test(String(t.value))) groupOf.set(e, 'site');
+    if (!t) continue;
+    if (/^plot\.(fence|gate|wicket|drive|walk)/.test(String(t.value))) groupOf.set(e, 'site');
+    else if (/^plot\.t/.test(String(t.value))) groupOf.set(e, 'temp');
   }
 const sysOf = new Map();
 for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELASSIGNSTOGROUP))) {
@@ -206,7 +209,7 @@ if (lost.size)
     errs.push(`${what}: ${Math.round(tri)} треугольников не привязаны к этажу — смотрелка их не покажет`);
 
 const need = ['walls', 'slabs', 'roof', 'openings', 'stairs', 'furniture', 'shafts',
-  'site', 'eom', 'vk', 'ov', 'ss'];
+  'site', 'temp', 'eom', 'vk', 'ov', 'ss'];
 for (const k of need)
   if (!stat.has(k) || stat.get(k).tri === 0) errs.push(`слой «${k}» пуст: геометрии нет вовсе`);
 if (V && (!stat.has('outside') || stat.get('outside').tri === 0))
