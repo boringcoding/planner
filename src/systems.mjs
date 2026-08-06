@@ -15,7 +15,7 @@
 // не бывает, и такой метраж хуже отсутствующего.
 
 import { point, pathOnLevel } from './model.mjs';
-import { siteMargin } from './roof.mjs';
+import { siteMargin, roofGeom } from './roof.mjs';
 import { plotGeom, plotLanes } from './plot.mjs';
 
 export const KIND = {
@@ -26,7 +26,11 @@ export const KIND = {
   switch: { l: 'выключатель', mat: 'ВВГнг-LS 3×1,5', top: 'chain', by: 'level' },
   cold: { l: 'холодная вода', mat: 'PEX 20', top: 'star' },
   hot: { l: 'горячая вода', mat: 'PEX 20', top: 'star' },
-  drain: { l: 'канализация', mat: 'ПП 50', top: 'chain', by: 'level' },
+  drain: { l: 'канализация 50', mat: 'ПП 50', top: 'chain', by: 'level' },
+  // унитаз на 50-й трубе не работает — его подводка и стояк только 110
+  drain110: { l: 'канализация 110', mat: 'ПП 110', top: 'chain', by: 'level' },
+  // стоки цоколя ниже лотка выпуска: самотёком не уходят, качает КНУ
+  kns: { l: 'КНУ цокольных стоков', mat: 'ПНД 40, напорная от КНУ', top: 'star' },
   radiator: { l: 'радиатор', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
   convector: { l: 'конвектор в полу', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
   ufh: { l: 'контур тёплого пола', mat: 'PEX 16, подача и обратка', top: 'star', k: 2 },
@@ -344,6 +348,16 @@ export function bill(house, sys) {
   // запас уже сидит в шаге; подводка посчитана прогоном выше
   for (const p of sys.points)
     if (p.kind === 'ufh') addM('PEX 16, контур тёплого пола', Math.round(p.w * p.h / UFH_STEP));
+  // канализационный стояк 110 — вертикаль на три уровня плюс фановый выход
+  // над кровлей: трубы, которой не было ни в ведомости, ни в смете
+  if (sys.id === 'vk' && house.levels.some(L => L.riser)) {
+    const top = house.levels[house.levels.length - 1];
+    const q = top.riser;
+    const up = q && house.roof
+      ? Math.round(roofGeom(house).zAt(q.x + q.w / 2, q.y + q.h / 2)) + 300
+      : top.base + top.clear;
+    addM('ПП 110, стояк и фановый выход', up - house.levels[0].base);
+  }
   // наружные вводы и выпуски — прямые участки, без запаса на изгибы;
   // футляры на пересечениях с канализацией — отдельной строкой
   for (const f of feedsGeom(house, sys)) {

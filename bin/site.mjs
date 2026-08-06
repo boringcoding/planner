@@ -2,13 +2,14 @@
 // Как и всё остальное, выводится из data/house.json — площади не хранятся, а считаются.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, renderRoof, renderPlot, explication, areas } from '../src/render.mjs';
+import { renderLevel, renderSystem, renderRoof, renderPlot, renderFacade, renderSection, FACADE_SIDES, explication, areas } from '../src/render.mjs';
 import { roofGeom, verandaGeom, flueTop, plotMargins } from '../src/roof.mjs';
 import { plotGeom } from '../src/plot.mjs';
 import { feedsGeom } from '../src/systems.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 import { ifc } from '../src/ifc.mjs';
+import { openingSchedule, lintelSchedule } from '../src/cost.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -51,9 +52,11 @@ const facts = [
 
 const plotG = plotGeom(house);
 const nav = levels.map(({ L }) => `<a href="#${slug(L.id)}">${esc(L.title)}</a>`).join('')
+  + '<a href="#facades">Фасады</a><a href="#section">Разрез</a>'
   + (plotG ? '<a href="#plot">Генплан</a>' : '')
   + (house.roof ? '<a href="#roof">Кровля</a>' : '')
   + bills.map(({ sys }) => `<a href="#${slug(sys.id)}">${esc(sys.title.split(' · ')[0])}</a>`).join('')
+  + '<a href="#spec">Спецификации</a>'
   + '<a href="#elev">Развёртки</a>' + (hasEngine ? '<a href="#ifc">Модель</a>' : '');
 
 const sheets = levels.map(({ L, e, svg }) => `
@@ -75,6 +78,28 @@ const sheets = levels.map(({ L, e, svg }) => `
         </tfoot>
       </table>
     </section>`).join('\n');
+
+// Фасады и разрез: до них отметки окон жили только в данных, а вертикаль
+// дома — в шапках листов. Монтажник и каменщик работают по этим двум
+const facadeSection = `
+    <section class="sheet" id="facades">
+      <div class="sheet-head">
+        <h2>Фасады</h2>
+        <p class="meta">Оси проёмов и отметки низа каждого окна — те же числа, что держит правило
+          осей фасада: совпали или разведены не меньше 600. Отметки в метрах от чистого пола.</p>
+      </div>
+      ${FACADE_SIDES.map(([sd, name]) => `<figure class="plan"><figcaption style="font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink35);padding:10px 14px 0">${esc(name)}</figcaption>${renderFacade(house, sd)}</figure>`).join('\n      ')}
+    </section>`;
+
+const sectionSheetHtml = `
+    <section class="sheet" id="section">
+      <div class="sheet-head">
+        <h2>Разрез 1-1</h2>
+        <p class="meta">Секущая по лестничной шахте. Дно котлована, фундаментный пирог, толщины
+          перекрытий, марши и ферма кровли — вертикаль всего дома одним листом.</p>
+      </div>
+      <figure class="plan">${renderSection(house)}</figure>
+    </section>`;
 
 // Генплан: единственный лист, где виден весь участок — посадка дома,
 // времянка, забор, септик и наружные сети. Конфликтуют они именно здесь
@@ -165,6 +190,62 @@ const sysSections = bills.map(({ sys, b }) => `
         <tfoot><tr><td>Итого с запасом ${Math.round((1.12 - 1) * 100)} %</td><td class="num">${m2(b.total)} м</td></tr></tfoot>
       </table>
     </section>`).join('\n');
+
+// Спецификации: по ним заказывают. Окна девяти типоразмеров с разными
+// подоконниками и перемычки трёх толщин стен из строк сметы не заказать —
+// а из данных они собираются сами
+const specSection = (() => {
+  const ops = openingSchedule(house);
+  const lint = lintelSchedule(house);
+  const sills = r => [...r.sills].sort((a, b) => a - b).map(v => v).join(' / ');
+  return `
+    <section class="sheet" id="spec">
+      <div class="sheet-head">
+        <h2>Спецификации</h2>
+        <p class="meta">Ведомости заполнений и перемычек — из той же геометрии, что планы и смета.
+          Направление открывания створок — при заказе, по месту; это допущение, а не потеря.</p>
+      </div>
+      <table class="expl">
+        <caption>Ведомость заполнений проёмов</caption>
+        <thead><tr><th>Марка</th><th>Что</th><th>Ширина × высота</th><th>Низ от пола</th><th>Кол-во</th><th>Примечание</th></tr></thead>
+        <tbody>${ops.map(r => `<tr>
+          <td class="num">${r.mark}</td>
+          <td>${{ 'ОК': 'окно', 'ДН': 'дверь наружная', 'ДВ': 'дверь внутренняя', 'В': 'ворота', 'Л': 'люк' }[r.cls]}</td>
+          <td class="num">${r.w} × ${r.h}</td>
+          <td class="num">${r.sills.size ? sills(r) : '—'}</td>
+          <td class="num">${r.n}</td>
+          <td>${esc([...r.notes].join(', ') || '')}<span class="use"> · ${esc(r.ids.join(', '))}</span></td>
+        </tr>`).join('\n        ')}</tbody>
+      </table>
+      <table class="expl">
+        <caption>Гильзы и закладные в монолите — заложить до заливки</caption>
+        <thead><tr><th>Трасса</th><th>Здание</th><th>Стена</th><th>По стене</th><th>Ось</th><th>Гильза</th></tr></thead>
+        <tbody>${systems.flatMap(sys => feedsGeom(house, sys)).filter(f => !f.pressure).map(f => {
+    const dn = f.kind === 'sewer' ? 'DN 200' : f.kind === 'water' ? 'DN 75' : 'DN 110';
+    const tmp = !!f.target;
+    const p = f.exit ? f.pts[0] : tmp ? f.pts[f.pts.length - 1] : f.pts[0];
+    const side = f.exit ? f.exit.side : tmp ? f.enter.side : f.side;
+    const at = f.exit ? f.exit.at : tmp ? f.enter.at : f.at;
+    return `<tr><td>${esc(f.id)} · ${f.kind === 'sewer' ? 'канализация' : f.kind === 'water' ? 'вода' : 'кабель'}</td>
+          <td>${tmp || f.exit ? 'времянка' : 'дом'}</td><td class="num">${side}</td>
+          <td class="num">${at}</td><td class="num">${(p.z / 1000).toFixed(2).replace('.', ',')}</td><td class="num">${dn}</td></tr>`;
+  }).join('\n        ')}</tbody>
+      </table>
+      <table class="expl">
+        <caption>Ведомость перемычек (опирание 250 на сторону)</caption>
+        <thead><tr><th>Марка</th><th>Стена</th><th>Проём</th><th>Длина</th><th>Кол-во</th><th>Тип</th></tr></thead>
+        <tbody>${lint.list.map(r => `<tr>
+          <td class="num">${r.mark}</td>
+          <td class="num">${r.th}</td>
+          <td class="num">${r.span}</td>
+          <td class="num">${r.len}</td>
+          <td class="num">${r.n}</td>
+          <td>${r.mono ? 'монолитный участок, армирование по расчёту КЖ' : 'сборная / U-блок'}<span class="use"> · ${esc(r.ids.join(', '))}</span></td>
+        </tr>`).join('\n        ')}
+        <tr><td></td><td colspan="4">проёмов в монолите цоколя — обрамление в теле стены, уходит в КЖ</td><td class="num">${lint.cokol}</td></tr></tbody>
+      </table>
+    </section>`;
+})();
 
 const elevSection = `
     <section class="sheet" id="elev">
@@ -311,11 +392,31 @@ const html = `<!doctype html>
 
   <nav>${nav}<a href="#brief">Задание</a></nav>
 ${sheets}
+${facadeSection}
+${sectionSheetHtml}
 ${plotSection}
 ${roofSection}
 ${sysSections}
+${specSection}
 ${elevSection}
 ${viewerSection}
+
+  <section class="brief" id="engineer">
+    <h2>Передаётся конструктору</h2>
+    <p class="lede">Геометрия решена и проверена, конструктив — расчётная работа, и выдавать
+      её «по опыту» при сейсмике 8 баллов нельзя. На расчёт уходят:</p>
+    <ul>
+      <li>армирование фундаментной плиты 400 и монолитных стен цоколя (грунт — по изысканиям);</li>
+      <li>перекрытия: пролёт 7,2 м над гаражом, проёмы лестничной шахты и стояков;</li>
+      <li>антисейсмические пояса и сердечники кладки — площадка 8 баллов;</li>
+      <li>монолитные участки над проёмами шире 1,75 м (ведомость перемычек выше);</li>
+      <li>узлы висячей фермы: опирание на мауэрлат, узел бабка–затяжка, стык затяжки на пролёте 7,6 м;</li>
+      <li>основание: инженерная геология и УГВ не выполнены — до откопки котлована обязательны
+        изыскания, посадка и дренаж приняты по условному грунту.</li>
+    </ul>
+    <p class="note">Гильзы и закладные для вводов — в таблице раздела «Спецификации»: их кладут
+      в опалубку до заливки, сверлить монолит при сейсмике — портить расчётное сечение.</p>
+  </section>
 
   <section class="brief" id="brief">
     <h2>Задание</h2>
@@ -355,6 +456,8 @@ for (const { sys, b } of bills)
 for (const { r, svg } of elevs) fs.writeFileSync(`site/elev-${r.id}.svg`, svg);
 if (house.roof) fs.writeFileSync('site/roof.svg', renderRoof(house));
 if (plotG) fs.writeFileSync('site/plot.svg', renderPlot(house, systems));
+for (const [sd] of FACADE_SIDES) fs.writeFileSync(`site/facade-${sd}.svg`, renderFacade(house, sd));
+fs.writeFileSync('site/section.svg', renderSection(house));
 fs.writeFileSync('site/house.ifc', ifcText);
 if (hasEngine) {
   fs.copyFileSync(new URL('../src/viewer.js', import.meta.url), 'site/viewer.js');

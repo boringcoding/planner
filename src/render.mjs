@@ -187,23 +187,44 @@ export function sheet(house, opt = {}) {
   // крыльцо гаража стоят на грунте слева от плана, и размерная линия,
   // прибитая к −1250, проходит прямо по ступеням
   const wExt = Math.max(0, ...outsideBits(house).filter(b => b.side === 'W').map(b => b.reach));
-  const dx = -Math.max(1250, wExt + 400);   // цепочка размеров уровня
+  // порядок рядов от стены наружу: проёмы, оси стен, габарит — каменщику
+  // сначала нужен простенок, и только потом ось
+  const dxOp = -Math.max(1250, wExt + 400); // привязки проёмов западной стены
+  const dx = dxOp - 900;                    // цепочка осей стен
   const dx2 = dx - 900;                     // общий габарит
   const wx = dx2 - 850;                     // подпись стороны СЗ
-  const ex = S.w + vExt + 800;              // подпись стороны ЮВ — за верандой
+  const exOp = S.w + vExt + 350;            // привязки проёмов восточной стены
+  const ex = exOp + 800;                    // подпись стороны ЮВ — за верандой
   return {
-    S, showDims, dx, dx2, wx, ex,
-    legendY: S.h + 3050,          // полоса условных обозначений и масштаба
-    padL: -wx + 900, padT: 2900, padB: 4800, padR: vExt + 1700
+    S, showDims, dx, dx2, wx, ex, dxOp, exOp,
+    opS: -350,                    // привязки проёмов южной стены — над планом
+    sideSy: -1000,                // подпись ЮЗ уходит выше ряда привязок
+    rowOpN: S.h + 950,            // привязки северной стены
+    rowWalls: S.h + 1850,         // оси стен
+    rowGab: S.h + 2750,           // габарит
+    sideNy: S.h + 3320,
+    legendY: S.h + 3950,          // полоса условных обозначений и масштаба
+    padL: -wx + 900, padT: 3300, padB: 5700, padR: vExt + 2500
   };
+}
+
+// привязки проёмов наружной стены: простенок — проём — простенок.
+// Раньше 38 проёмов не входили ни в одну цепочку: на плане окно нарисовано,
+// а поставить его каменщику не по чему
+export function openChain(house, L, side) {
+  const S = house.shell;
+  const size = side === 'S' || side === 'N' ? S.w : S.h;
+  const pts = (L.windows || []).filter(w => w.side === side)
+    .flatMap(w => [w.a, w.b]).sort((a, b) => a - b);
+  return pts.length ? [0, ...pts, size] : null;
 }
 
 // Штамп: лист должен называть сам себя. PNG уходит в переписку без страницы
 // вокруг, и без заголовка по нему не сказать даже, какой это уровень
 const stampTexts = (house, L) => [
-  { t: `${house.project.title} · ${L.title}`, cx: 0, baseline: -2150, fs: 420, font: 'sans', anchor: 'start' },
-  ...(L.meta ? [{ t: L.meta, cx: 0, baseline: -1700, fs: 260, font: 'mono', anchor: 'start' }] : []),
-  { t: 'размеры в миллиметрах', cx: 0, baseline: -1300, fs: 240, font: 'mono', anchor: 'start' }
+  { t: `${house.project.title} · ${L.title}`, cx: 0, baseline: -2550, fs: 420, font: 'sans', anchor: 'start' },
+  ...(L.meta ? [{ t: L.meta, cx: 0, baseline: -2100, fs: 260, font: 'mono', anchor: 'start' }] : []),
+  { t: 'размеры в миллиметрах', cx: 0, baseline: -1700, fs: 240, font: 'mono', anchor: 'start' }
 ];
 
 // Условные обозначения собираются по тому, что на листе есть: легенда с
@@ -239,8 +260,13 @@ export function labelBoxes(house, L, opt = {}) {
   if (L.stair) add('stair', 'марка лестницы', stairText(L.stair));
   if (L.veranda) for (const d of verandaTexts(L.veranda)) add('veranda', 'веранда', d);
   if (g.showDims) {
-    for (const d of chainTexts('x', S.h + 950, L.dims.x)) add('dim', 'размер X', d);
-    for (const d of chainTexts('x', S.h + 1850, [0, S.w])) add('dim', 'габарит X', d);
+    for (const [side, kind, pos] of [['S', 'x', g.opS], ['N', 'x', g.rowOpN],
+    ['W', 'y', g.dxOp], ['E', 'y', g.exOp]]) {
+      const arr = openChain(house, L, side);
+      if (arr) for (const d of chainTexts(kind, pos, arr)) add('dim', `проёмы ${side}`, d);
+    }
+    for (const d of chainTexts('x', g.rowWalls, L.dims.x)) add('dim', 'размер X', d);
+    for (const d of chainTexts('x', g.rowGab, [0, S.w])) add('dim', 'габарит X', d);
     for (const d of chainTexts('y', g.dx, L.dims.y)) add('dim', 'размер Y', d);
     for (const d of chainTexts('y', g.dx2, [0, S.h])) add('dim', 'габарит Y', d);
   }
@@ -256,8 +282,8 @@ export function labelBoxes(house, L, opt = {}) {
     out.push({ kind: 'legend', owner: it.t, x: b.x - 600, y: b.y, w: b.w + 600, h: b.h });
   });
   const sides = house.site.sides;
-  add('side', 'ЮЗ', { t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 });
-  add('side', 'СВ', { t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 });
+  add('side', 'ЮЗ', { t: sides.S, cx: S.w / 2, baseline: g.sideSy, fs: 400, font: 'mono', ls: 120 });
+  add('side', 'СВ', { t: sides.N, cx: S.w / 2, baseline: g.sideNy, fs: 340, font: 'mono', ls: 120 });
   add('side', 'СЗ', { t: sides.W, cx: g.wx, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: -1 });
   add('side', 'ЮВ', { t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 });
   return out;
@@ -705,8 +731,13 @@ export function renderLevel(house, L, opt = {}) {
   if (opt.pale) s += `</g>`;
 
   if (g.showDims) {
-    s += chain('x', S.h + 950, L.dims.x);
-    s += chain('x', S.h + 1850, [0, S.w]);
+    for (const [side, kind, pos] of [['S', 'x', g.opS], ['N', 'x', g.rowOpN],
+    ['W', 'y', g.dxOp], ['E', 'y', g.exOp]]) {
+      const arr = openChain(house, L, side);
+      if (arr) s += chain(kind, pos, arr);
+    }
+    s += chain('x', g.rowWalls, L.dims.x);
+    s += chain('x', g.rowGab, [0, S.w]);
     s += chain('y', g.dx, L.dims.y);
     s += chain('y', g.dx2, [0, S.h]);
   }
@@ -716,9 +747,9 @@ export function renderLevel(house, L, opt = {}) {
   s += scaleBar(0, g.legendY + 1150);
   s += legend(house, L, g);
 
-  s += compass(S.w + 1100, -900, house.site.frontAzimuth);
-  s += t2svg({ t: sides.S, cx: S.w / 2, baseline: -700, fs: 400, font: 'mono', ls: 120 }, C.ink);
-  s += t2svg({ t: sides.N, cx: S.w / 2, baseline: S.h + 2420, fs: 340, font: 'mono', ls: 120 }, C.ink35);
+  s += compass(S.w + 1100, -1300, house.site.frontAzimuth);
+  s += t2svg({ t: sides.S, cx: S.w / 2, baseline: g.sideSy, fs: 400, font: 'mono', ls: 120 }, C.ink);
+  s += t2svg({ t: sides.N, cx: S.w / 2, baseline: g.sideNy, fs: 340, font: 'mono', ls: 120 }, C.ink35);
   s += t2svg({ t: sides.W, cx: g.wx, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: -1 }, C.ink35);
   s += t2svg({ t: sides.E, cx: g.ex, baseline: S.h / 2, fs: 340, font: 'mono', ls: 80, rot: 1 }, C.ink35);
   s += `</svg>`;
@@ -806,15 +837,18 @@ export function roofTexts(house) {
     add('roof', 'карниз СВ', { t: eaveT, cx: o.x + o.w * 0.78, baseline: o.y + o.h - 500, fs: 260, font: 'mono' });
   }
 
-  // труба на плане — квадратик, и без отметки верха по нему ничего не заказать
+  // труба на плане — квадратик, и без отметки верха по нему ничего не заказать.
+  // Фановому выходу дымоходные правила не нужны: ему хватает 300 над скатом
   for (const h of roofHoles(house)) {
     const cx = h.x + h.w / 2, cy = h.y + h.h / 2;
     const side = cx < (o.x + o.w / 2) ? 1 : -1;
     const lx = cx + side * 1300;
     const src = house.levels[house.levels.length - 1];
     const f = (src.flues || []).concat(src.ducts || []).find(e => e.id.endsWith(h.id.split('.')[1]));
+    const top = h.kind === 'фановый' || !f
+      ? Math.round(g.zAt(cx, cy)) + 300 : flueTop(house, f);
     add('hole', h.id, { t: `${h.kind} ${h.id.split('.')[1]}`, cx: lx, baseline: cy - 60, fs: 240, font: 'mono' });
-    add('hole', h.id + ' верх', { t: `верх ${mark(flueTop(house, f))}`, cx: lx, baseline: cy + 300, fs: 240, font: 'mono' });
+    add('hole', h.id + ' верх', { t: `верх ${mark(top)}`, cx: lx, baseline: cy + 300, fs: 240, font: 'mono' });
   }
 
   if (q.V) {
@@ -1183,6 +1217,354 @@ export function renderPlot(house, systems) {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// фасады
+//
+// Четыре наружных вида: монтажнику окон не по чему выставить проём на
+// отметку, каменщику — проверить оси, пока sill и hz живут только в данных.
+// Правило 35 нарочно свело окна к осям фасада — вот лист, где это видно.
+// Горизонталь — координата вдоль стены (для видов с севера и запада
+// зеркалится: смотрят с той стороны), вертикаль — отметка со знаком минус:
+// SVG растёт вниз, а дом вверх.
+// ---------------------------------------------------------------------------
+
+export const FACADE_SIDES = [
+  ['S', 'ЮЗ · уличный'], ['E', 'ЮВ · солнечный'], ['N', 'СВ · в глубину участка'], ['W', 'СЗ · хозяйственный']];
+
+export function facadeSheet(house, side) {
+  const S = house.shell, g = roofGeom(house);
+  const len = side === 'S' || side === 'N' ? S.w : S.h;
+  const hx = v => side === 'N' ? S.w - v : side === 'W' ? S.h - v : v;
+  const ground = house.site.ground ?? -300;
+  // фронтоны стоят на торцах, поперёк конька; на продольных фасадах виден скат
+  const gable = (side === 'S' || side === 'N') === g.alongY;
+  return {
+    S, g, side, len, hx, ground, gable,
+    top: g.ridgeZ + 700, bottom: ground - 2100,
+    padL: 3600, padT: 2350, padB: 3100, padR: 1500
+  };
+}
+
+const level = (house, id) => house.levels.find(l => l.id === id);
+
+// подписи фасада одним списком: отметки уровней, низ каждого проёма, оси
+export function facadeTexts(house, side) {
+  const q = facadeSheet(house, side), out = [];
+  const add = (kind, owner, d) => out.push({ kind, owner, d });
+  const marks = [
+    ['земля', q.ground], ['±0,000', 0],
+    ['2 этаж', level(house, 'second').base],
+    ['карниз', q.g.eaveZ], ['конёк', q.g.ridgeZ]
+  ];
+  marks.forEach(([name, z], i) => add('mark', name, {
+    t: `${mark(z)}`, cx: -1450, baseline: -z - 60, fs: 240, font: 'mono'
+  }));
+  add('stamp', 'заголовок', {
+    t: `${house.project.title} · Фасад ${house.site.sides[side].split(' ')[0] || side}`,
+    cx: -q.padL + 400, baseline: -q.top - q.padT + 700, fs: 420, font: 'sans'
+  });
+  add('stamp', 'единицы', {
+    t: 'отметки в метрах от чистого пола первого этажа',
+    cx: -q.padL + 400, baseline: -q.top - q.padT + 1150, fs: 240, font: 'mono'
+  });
+  // проёмы: отметка низа под каждым, абсолютная — по ней и монтируют.
+  // Нулевой порог ворот и дверей не подписывается: шум, а не отметка
+  for (const L of house.levels)
+    for (const w of (L.windows || []).filter(x => x.side === side)) {
+      const z0 = L.base + (w.sill || 0);
+      if (z0 + (w.hz || 0) <= q.ground) continue;             // люк в приямке — под землёй
+      if (z0 === 0) continue;
+      const c = q.hx((w.a + w.b) / 2);
+      add('sill', w.id, { t: mark(z0), cx: c, baseline: -z0 + 300, fs: 200, font: 'mono' });
+    }
+  // цепочка осей проёмов по низу листа
+  const axes = [...new Set(house.levels.flatMap(L => (L.windows || [])
+    .filter(w => w.side === side && L.base + (w.sill || 0) + (w.hz || 0) > q.ground)
+    .map(w => q.hx((w.a + w.b) / 2))))].sort((a, b) => a - b);
+  if (axes.length)
+    for (const d of chainTexts('x', -q.ground + 950, [0, ...axes, q.len])) add('dim', 'оси', d);
+  for (const d of chainTexts('x', -q.ground + 1850, [0, q.len])) add('dim', 'габарит', d);
+  return out;
+}
+
+// рамки одного фасадного листа: подписи разных листов не соседи,
+// и проверять их друг с другом было бы ложняком
+export function facadeLabelBoxes(house, side) {
+  return facadeTexts(house, side).map(e => {
+    const b = textBox(e.d);
+    return e.kind === 'stamp'
+      ? { kind: e.kind, owner: `${side}:${e.owner}`, x: e.d.cx, y: b.y, w: b.w, h: b.h }
+      : { kind: e.kind, owner: `${side}:${e.owner}`, ...b };
+  });
+}
+
+export function renderFacade(house, side) {
+  const q = facadeSheet(house, side), S = q.S, g = q.g, R = house.roof;
+  const W = q.len + q.padL + q.padR, H = q.top - q.bottom + q.padT + q.padB;
+  const X = q.hx, Yz = z => -z;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-q.padL} ${-q.top - q.padT} ${W} ${H}" font-family="IBM Plex Sans,system-ui,sans-serif">`;
+  s += `<rect x="${-q.padL}" y="${-q.top - q.padT}" width="${W}" height="${H}" fill="${C.paper}"/>`;
+
+  // стена с цоколем
+  s += `<rect x="0" y="${Yz(g.gableBase)}" width="${q.len}" height="${g.gableBase - q.ground}" fill="${C.room}" stroke="${C.ink}" stroke-width="70"/>`;
+  s += `<rect x="0" y="${Yz(0)}" width="${q.len}" height="${-q.ground}" fill="${C.garage}" stroke="${C.ink}" stroke-width="55"/>`;
+
+  if (q.gable) {
+    // торец: фронтон и кромки скатов от конька к карнизам
+    const p = g.gableProf.map(([u, z]) => `${X(u)},${Yz(g.gableBase + z)}`).join(' ');
+    s += `<polygon points="${p}" fill="${C.room}" stroke="${C.ink}" stroke-width="70"/>`;
+    const cx = X(g.span / 2);
+    for (const n of [-1, 1]) {
+      const ex = X(g.span / 2 + n * (g.span / 2 + R.eave));
+      s += `<line x1="${cx}" y1="${Yz(g.ridgeZ)}" x2="${ex}" y2="${Yz(g.eaveZ)}" stroke="${C.ink}" stroke-width="170"/>`;
+    }
+    // продух у конька
+    const v = g.ventBox;
+    s += `<rect x="${cx - v.w / 2}" y="${Yz(g.gableBase + v.v + v.h)}" width="${v.w}" height="${v.h}" fill="${C.paper}" stroke="${C.ink}" stroke-width="45"/>`;
+  } else {
+    // продольный фасад: плоскость ската в проекции от карниза до конька
+    s += `<rect x="${-R.gable}" y="${Yz(g.ridgeZ)}" width="${q.len + 2 * R.gable}" height="${g.ridgeZ - g.eaveZ}" fill="${C.garage}" stroke="${C.ink}" stroke-width="70"/>`;
+    s += `<line x1="${-R.gable}" y1="${Yz(g.ridgeZ)}" x2="${q.len + R.gable}" y2="${Yz(g.ridgeZ)}" stroke="${C.ink}" stroke-width="110"/>`;
+    // жёлоб по карнизу
+    s += `<line x1="${-R.gable}" y1="${Yz(g.eaveZ) + 60}" x2="${q.len + R.gable}" y2="${Yz(g.eaveZ) + 60}" stroke="${C.ink60}" stroke-width="${R.gutter}"/>`;
+  }
+
+  // выносы фасада: дымоходы, крыльцо, приямок, веранда, пандусы
+  for (const b of outsideBits(house).filter(x => x.side === side)) {
+    const [a0, a1] = b.band.map(X).sort((p, r) => p - r);
+    if (b.kind === 'дымоход') {
+      const f = house.levels[house.levels.length - 1].flues.find(x => x.id === b.id);
+      const top = f ? flueTop(house, f) : g.ridgeZ;
+      s += `<rect x="${a0}" y="${Yz(top)}" width="${a1 - a0}" height="${top - q.ground}" fill="${C.room}" stroke="${C.ink}" stroke-width="60"/>`;
+    } else if (b.kind === 'приямок') {
+      const p = pitGeom(house).find(x => x.id === b.id);
+      if (p) s += `<rect x="${a0}" y="${Yz(p.top)}" width="${a1 - a0}" height="${p.top - q.ground}" fill="${C.garage}" stroke="${C.ink}" stroke-width="55"/>`;
+    } else {
+      const p = porchGeom(house).find(x => x.id === b.id);
+      if (p) s += `<rect x="${a0}" y="${Yz(p.landZ)}" width="${a1 - a0}" height="${p.landZ - q.ground}" fill="${C.garage}" stroke="${C.ink}" stroke-width="55"/>`;
+    }
+  }
+  const V = verandaGeom(house);
+  if (V && V.wall === side) {
+    const v = V.v;
+    const [a0, a1] = [X(v.y), X(v.y + v.h)].sort((p, r) => p - r);
+    s += `<rect x="${a0}" y="${Yz(v.deck)}" width="${a1 - a0}" height="${v.deck - q.ground}" fill="${C.garage}" stroke="${C.ink}" stroke-width="55"/>`;
+    s += `<rect x="${a0}" y="${Yz(V.railTop)}" width="${a1 - a0}" height="${V.railTop - v.deck}" fill="none" stroke="${C.ink60}" stroke-width="45"/>`;
+    // полоса навеса: от примыкания к низу наружного края — в проекции тонкая
+    s += `<rect x="${a0 - v.canopy}" y="${Yz(v.attach)}" width="${a1 - a0 + 2 * v.canopy}" height="${v.attach - V.dropZ}" fill="${C.ink60}" opacity="0.5"/>`;
+    for (const p of V.posts) {
+      const px = X(p.y + p.h / 2);
+      s += `<rect x="${px - v.post / 2}" y="${Yz(V.dropZ)}" width="${v.post}" height="${V.dropZ - v.deck}" fill="${C.ink}"/>`;
+    }
+  }
+  for (const r of rampGeom(house).filter(x => x.side === side)) {
+    const [a0, a1] = [X(r.pad.x), X(r.pad.x + r.pad.w)].sort((p, m) => p - m);
+    s += `<polygon points="${a0},${Yz(r.z1)} ${a1},${Yz(r.z1)} ${(a0 + a1) / 2 > q.len / 2 ? a1 : a0},${Yz(r.z0)}" fill="${C.garage}" stroke="${C.ink35}" stroke-width="40"/>`;
+  }
+
+  // проёмы фасада
+  for (const L of house.levels)
+    for (const w of (L.windows || []).filter(x => x.side === side)) {
+      const z0 = L.base + (w.sill || 0), z1 = z0 + (w.hz || 0);
+      if (z1 <= q.ground) continue;
+      const [a0, a1] = [X(w.a), X(w.b)].sort((p, r) => p - r);
+      const fill = w.kind === 'gate' || w.kind === 'hatch' ? C.garage : w.kind ? C.furnFill : '#CBD8DD';
+      s += `<rect x="${a0}" y="${Yz(z1)}" width="${a1 - a0}" height="${z1 - z0}" fill="${fill}" stroke="${C.ink}" stroke-width="70"/>`;
+      if (!w.kind) {
+        s += `<line x1="${(a0 + a1) / 2}" y1="${Yz(z1)}" x2="${(a0 + a1) / 2}" y2="${Yz(z0)}" stroke="${C.ink}" stroke-width="40"/>`;
+        if (a1 - a0 > 1600) s += `<line x1="${a0}" y1="${Yz(z0 + (z1 - z0) / 2)}" x2="${a1}" y2="${Yz(z0 + (z1 - z0) / 2)}" stroke="${C.ink}" stroke-width="40"/>`;
+      }
+      if (w.kind === 'gate')
+        for (let yy = z0 + 400; yy < z1; yy += 400)
+          s += `<line x1="${a0 + 60}" y1="${Yz(yy)}" x2="${a1 - 60}" y2="${Yz(yy)}" stroke="${C.ink60}" stroke-width="35"/>`;
+      // ось проёма — штрихпунктиром до цепочки осей
+      s += `<line x1="${(a0 + a1) / 2}" y1="${Yz(z0)}" x2="${(a0 + a1) / 2}" y2="${-q.ground + 700}" stroke="${C.ink35}" stroke-width="25" stroke-dasharray="500 140 60 140"/>`;
+    }
+
+  // линия земли
+  s += `<line x1="${-q.padL + 500}" y1="${Yz(q.ground)}" x2="${q.len + q.padR - 200}" y2="${Yz(q.ground)}" stroke="${C.ink}" stroke-width="90"/>`;
+
+  // отметки уровней: чёрточка от марки к телу
+  for (const e of facadeTexts(house, side)) {
+    if (e.kind === 'mark')
+      s += `<line x1="${-250}" y1="${e.d.baseline + 60}" x2="${350}" y2="${e.d.baseline + 60}" stroke="${C.ink35}" stroke-width="35"/>`;
+    if (e.kind === 'dim') continue;
+    s += t2svg(e.d, e.kind === 'stamp' && e.d.fs > 300 ? C.ink : e.kind === 'sill' ? C.ink : C.ink60,
+      halo(C.paper, 170)).replace(e.kind === 'stamp' ? 'text-anchor="middle"' : '~', 'text-anchor="start"');
+  }
+  {
+    const axes = [...new Set(house.levels.flatMap(L => (L.windows || [])
+      .filter(w => w.side === side && L.base + (w.sill || 0) + (w.hz || 0) > q.ground)
+      .map(w => q.hx((w.a + w.b) / 2))))].sort((a, b) => a - b);
+    if (axes.length) s += chain('x', -q.ground + 950, [0, ...axes, q.len]);
+    s += chain('x', -q.ground + 1850, [0, q.len]);
+  }
+  s += scaleBar(q.len - 3000, -q.ground + 2700);
+  s += `</svg>`;
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// разрез
+//
+// Вертикаль всего дома одним листом: дно котлована, пирог фундамента,
+// перекрытия с толщинами, лестница ступенями, ферма кровли и веранда.
+// До него отметки жили в шапках листов и в коде сметы — и смета копала
+// котлован до −3,40, пока модель клала песок до −3,70.
+// ---------------------------------------------------------------------------
+
+export function sectionSheet(house) {
+  const S = house.shell, g = roofGeom(house);
+  const F = house.foundation || {};
+  const slab = F.slab ?? 400, lean = F.lean ?? 0, sand = F.sand ?? 0, fOut = F.out ?? 0;
+  const base0 = house.levels[0].base;
+  const dig = base0 - slab - lean - sand;                    // дно котлована
+  const st = house.levels[0].stair;
+  const yc = st ? st.y + (st.h - 100) / 4 : S.h / 2;         // плоскость — по нижнему маршу
+  const V = verandaGeom(house);
+  const x1 = V ? V.canopyBox.x + V.canopyBox.w : S.w;
+  return {
+    S, g, F: { slab, lean, sand, fOut }, dig, base0, yc, V, x1,
+    top: g.ridgeZ + 700, bottom: dig - 1600,
+    padL: 4300, padT: 2350, padB: 6800, padR: 1700
+  };
+}
+
+export function sectionTexts(house) {
+  const q = sectionSheet(house), R = house.roof, out = [];
+  const add = (kind, owner, d) => out.push({ kind, owner, d });
+  const marks = [
+    ['дно котлована', q.dig], ['низ плиты', q.base0 - q.F.slab], ['пол цоколя', q.base0],
+    ['±0,000', 0], ['пол 2 этажа', level(house, 'second').base],
+    ['мауэрлат', R.base], ['конёк', q.g.ridgeZ]
+  ];
+  for (const [name, z] of marks)
+    add('mark', name, { t: mark(z), cx: -2000, baseline: -z - 60, fs: 240, font: 'mono' });
+  add('stamp', 'заголовок', { t: `${house.project.title} · Разрез 1-1`, cx: -q.padL + 400, baseline: -q.top - q.padT + 700, fs: 420, font: 'sans' });
+  add('stamp', 'по маршу', { t: `секущая — по лестничной шахте, взгляд на северо-восток`, cx: -q.padL + 400, baseline: -q.top - q.padT + 1150, fs: 240, font: 'mono' });
+  const notes = [
+    `котлован до ${mark(q.dig)}: песчаная подготовка ${q.F.sand}, подбетонка ${q.F.lean}, плита ${q.F.slab} с выпуском ${q.F.fOut}`,
+    `перекрытия монолит: над цоколем ${house.levels[0].floorToFloor - house.levels[0].clear}, межэтажное ${level(house, 'second').base - level(house, 'first').base - level(house, 'first').clear === 300 ? 300 : level(house, 'first').floorToFloor - level(house, 'first').clear}; чердачное — затяжки ${R.tie[0]}×${R.tie[1]} с подшивкой, утепление ${R.insulation}`,
+    `лестница: два марша по ${house.levels[0].stair.tread} проступь, ограждение ${house.levels[0].stair.rail}`,
+    `кровля: стропило ${R.rafter[0]}×${R.rafter[1]} на мауэрлате ${R.mauerlat[0]}×${R.mauerlat[1]}, висячая ферма, конёк ${mark(q.g.ridgeZ)}`,
+    ...(q.V ? [`веранда: настил ${mark(q.V.v.deck)}, примыкание навеса ${mark(q.V.v.attach)}, проход под прогоном ${q.V.beamClear}`] : [])
+  ];
+  notes.forEach((t, i) => add('note', t.slice(0, 24),
+    { t: `— ${t}`, cx: -q.padL + 400, baseline: -q.bottom + 1500 + i * 420, fs: 200, font: 'mono' }));
+  for (const d of chainTexts('x', -q.bottom + 350, [0, ...house.levels[0].stair ? [house.levels[0].stair.x, house.levels[0].stair.x + house.levels[0].stair.w] : [], q.S.w]))
+    add('dim', 'план X', d);
+  return out;
+}
+
+export function sectionLabelBoxes(house) {
+  return sectionTexts(house).map(e => {
+    const b = textBox(e.d);
+    return e.kind === 'stamp' || e.kind === 'note'
+      ? { kind: e.kind, owner: e.owner, x: e.d.cx, y: b.y, w: b.w, h: b.h }
+      : { kind: e.kind, owner: e.owner, ...b };
+  });
+}
+
+export function renderSection(house) {
+  const q = sectionSheet(house), S = q.S, g = q.g, R = house.roof;
+  const Yz = z => -z;
+  const W = q.x1 + q.padL + q.padR, H = q.top - q.bottom + q.padT + q.padB;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-q.padL} ${-q.top - q.padT} ${W} ${H}" font-family="IBM Plex Sans,system-ui,sans-serif">`;
+  s += `<rect x="${-q.padL}" y="${-q.top - q.padT}" width="${W}" height="${H}" fill="${C.paper}"/>`;
+  const ground = house.site.ground ?? -300;
+
+  // грунт по бокам и под пирогом
+  const soil = `fill="#D6D6C9"`;
+  s += `<rect x="${-q.padL + 1300}" y="${Yz(ground)}" width="${q.padL - 1300}" height="${ground - q.dig - 300 + 0}" ${soil}/>`;
+  s += `<rect x="${S.w + q.F.fOut + 200}" y="${Yz(ground)}" width="${q.x1 + q.padR - S.w - 500}" height="${ground - q.bottom - 800}" ${soil}/>`;
+  s += `<rect x="${-q.padL + 1300}" y="${Yz(q.dig)}" width="${q.x1 + q.padR - 500 + q.padL - 1300 - 200}" height="${q.dig - q.bottom - 800}" ${soil}/>`;
+
+  // фундаментный пирог: песок, подбетонка, плита с выпуском
+  const F = q.F, b0 = q.base0;
+  s += `<rect x="${-F.fOut - 200}" y="${Yz(b0 - F.slab - F.lean)}" width="${S.w + 2 * F.fOut + 400}" height="${F.sand}" fill="#E0DAC8" stroke="${C.ink35}" stroke-width="35"/>`;
+  s += `<rect x="${-F.fOut - 100}" y="${Yz(b0 - F.slab)}" width="${S.w + 2 * F.fOut + 200}" height="${F.lean}" fill="${C.garage}" stroke="${C.ink35}" stroke-width="35"/>`;
+  s += `<rect x="${-F.fOut}" y="${Yz(b0)}" width="${S.w + 2 * F.fOut}" height="${F.slab}" fill="${C.ink60}" stroke="${C.ink}" stroke-width="55"/>`;
+
+  // наружные стены в сечении — от плиты до мауэрлата
+  for (const x of [0, S.w - S.wall])
+    s += `<rect x="${x}" y="${Yz(R.base)}" width="${S.wall}" height="${R.base - b0}" fill="${C.ink}"/>`;
+  // внутренние стены, попавшие в секущую
+  for (const L of house.levels)
+    for (const w of L.walls)
+      if (w.y <= q.yc && q.yc <= w.y + w.h && w.w < w.h)
+        s += `<rect x="${w.x}" y="${Yz(L.base + L.clear)}" width="${w.w}" height="${L.clear}" fill="${C.ink}"/>`;
+
+  // перекрытия с проёмом лестничной шахты
+  for (const L of house.levels) {
+    const next = house.levels[house.levels.indexOf(L) + 1];
+    if (!next) break;
+    const th = next.base - L.base - L.clear;
+    const hole = L.stair ? [L.stair.x, L.stair.x + L.stair.w] : null;
+    const spans = hole ? [[S.wall, hole[0]], [hole[1], S.w - S.wall]] : [[S.wall, S.w - S.wall]];
+    for (const [a, b] of spans.filter(([a, b]) => b - a > 50))
+      s += `<rect x="${a}" y="${Yz(next.base)}" width="${b - a}" height="${th}" fill="${C.ink60}" stroke="${C.ink}" stroke-width="45"/>`;
+  }
+  // чердачное перекрытие: затяжка с утеплением
+  s += `<rect x="${S.wall}" y="${Yz(R.base + R.tie[0])}" width="${S.w - 2 * S.wall}" height="${R.tie[0]}" fill="${C.furn}"/>`;
+  s += `<rect x="${S.wall}" y="${Yz(R.base + R.tie[0] + 300)}" width="${S.w - 2 * S.wall}" height="300" fill="${C.quiet}" stroke="${C.ink35}" stroke-width="30"/>`;
+
+  // кровля в сечении: скаты к коньку, мауэрлаты, бабка
+  const cx = g.alongY ? S.w / 2 : S.h / 2;
+  for (const n of [-1, 1]) {
+    const ex = cx + n * (g.span / 2 + R.eave);
+    s += `<line x1="${cx}" y1="${Yz(g.ridgeZ)}" x2="${ex}" y2="${Yz(g.eaveZ)}" stroke="${C.ink}" stroke-width="200"/>`;
+  }
+  for (const x of [S.wall / 2, S.w - S.wall / 2])
+    s += `<rect x="${x - R.mauerlat[0] / 2}" y="${Yz(R.base)}" width="${R.mauerlat[0]}" height="${R.mauerlat[1]}" fill="${C.furn}"/>`;
+  s += `<rect x="${cx - R.hanger[1] / 2}" y="${Yz(g.gableApexZ - 100)}" width="${R.hanger[1]}" height="${g.gableApexZ - 100 - (R.base + R.tie[0])}" fill="${C.furn}"/>`;
+
+  // лестничные марши ступенями — по той же геометрии, что план и выгрузка
+  for (const L of house.levels) {
+    const st = L.stair, next = house.levels[house.levels.indexOf(L) + 1];
+    if (!st || !next) continue;
+    const gg = stairGeom(st), rise = (next.base - L.base) / st.risers;
+    for (let j = 1; j <= gg.steps; j++) {
+      const x = gg.stepX(j, true);
+      s += `<rect x="${x}" y="${Yz(L.base + rise * j)}" width="${st.tread}" height="${rise * j - 0 > 0 ? rise : rise}" fill="${C.garage}" stroke="${C.ink}" stroke-width="40"/>`;
+    }
+    s += `<rect x="${gg.landX0}" y="${Yz(L.base + (next.base - L.base) / 2)}" width="${gg.landing}" height="250" fill="${C.garage}" stroke="${C.ink}" stroke-width="40"/>`;
+    // поручень над нижним маршем
+    const xA = gg.stepX(1, true) + st.tread / 2, xB = gg.stepX(gg.steps, true) + st.tread / 2;
+    s += `<line x1="${xA}" y1="${Yz(L.base + rise + st.rail)}" x2="${xB}" y2="${Yz(L.base + rise * gg.steps + st.rail)}" stroke="${C.ink60}" stroke-width="50"/>`;
+  }
+
+  // веранда в сечении: сваи, настил, стойка, навес и прогон
+  if (q.V) {
+    const V = q.V, v = V.v;
+    s += `<rect x="${v.x}" y="${Yz(v.deck)}" width="${v.w}" height="${v.board + v.joist[0]}" fill="${C.furn}"/>`;
+    for (const j of [0, 1]) {
+      const px = v.x + (j ? v.w - 450 : 150);
+      s += `<rect x="${px}" y="${Yz(V.pileTop)}" width="120" height="${V.pileTop - V.pileBottom}" fill="${C.ink60}"/>`;
+    }
+    s += `<rect x="${v.x + v.w - v.post}" y="${Yz(Math.round(v.attach - (v.w - v.post / 2) * Math.tan(v.pitch * Math.PI / 180)))}" width="${v.post}" height="${V.postZ}" fill="${C.furn}"/>`;
+    s += `<line x1="${v.x}" y1="${Yz(v.attach)}" x2="${v.x + V.canopyRun}" y2="${Yz(V.dropZ)}" stroke="${C.ink}" stroke-width="130"/>`;
+    s += `<rect x="0" y="${Yz(V.railTop)}" width="0" height="0" fill="none"/>`;
+  }
+
+  // линия земли
+  s += `<line x1="${-q.padL + 900}" y1="${Yz(ground)}" x2="${q.x1 + q.padR - 300}" y2="${Yz(ground)}" stroke="${C.ink}" stroke-width="90"/>`;
+
+  for (const e of sectionTexts(house)) {
+    if (e.kind === 'mark')
+      s += `<line x1="${-800}" y1="${e.d.baseline + 60}" x2="${-150}" y2="${e.d.baseline + 60}" stroke="${C.ink35}" stroke-width="35"/>`;
+    if (e.kind === 'dim') continue;
+    const el = t2svg(e.d, e.kind === 'stamp' && e.d.fs > 300 ? C.ink : C.ink60, halo(C.paper, 170));
+    s += (e.kind === 'stamp' || e.kind === 'note') ? el.replace('text-anchor="middle"', 'text-anchor="start"') : el;
+  }
+  {
+    const st0 = house.levels[0].stair;
+    s += chain('x', -q.bottom - 350 + 700, [0, ...(st0 ? [st0.x, st0.x + st0.w] : []), S.w]);
+  }
+  s += scaleBar(q.x1 - 3000, -q.bottom + 700);
+  s += `</svg>`;
+  return s;
+}
+
 // стрелка уклона: линия с наконечником на карнизном конце
 function arrow(x1, y1, x2, y2) {
   const a = Math.atan2(y2 - y1, x2 - x1), h = 320, w = 0.34;
@@ -1200,7 +1582,8 @@ export const SYS_C = { eom: '#A8762A', vk: '#2E6C8C', ov: '#B3402F', ss: '#41785
 
 const GLYPH = {
   socket: 'Р', socketIP: 'Р+', power: '3Ф', light: 'С', switch: 'В',
-  cold: 'ХВ', hot: 'ГВ', drain: 'К', radiator: 'РД', convector: 'КВ', supply: 'П', exhaust: 'ВЫ',
+  cold: 'ХВ', hot: 'ГВ', drain: 'К', drain110: 'К1', kns: 'НС',
+  radiator: 'РД', convector: 'КВ', supply: 'П', exhaust: 'ВЫ',
   data: 'RJ', tv: 'ТВ', rack: 'Ш', leak: 'ПР', smoke: 'ДЫ'
 };
 

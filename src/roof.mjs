@@ -302,8 +302,10 @@ export function flueTop(house, f) {
   return Math.max(byRidge, Math.round(g.zAt(cx, cy)) + 500);
 }
 
-// Шахты, которые протыкают кровлю: дымоходы и вентшахта. Приставная труба
-// стоит снаружи стены и попадает под свес — значит в скате нужен проём
+// Шахты, которые протыкают кровлю: дымоходы, вентшахта и фановый выход
+// канализационного стояка. Приставная труба стоит снаружи стены и попадает
+// под свес — значит в скате нужен проём. Фановый — тем более: стояк без
+// выхода над кровлей срывает затворы, а на плане это не видно никогда
 export function roofHoles(house) {
   const g = roofGeom(house), out = [];
   const L = house.levels[house.levels.length - 1];
@@ -315,6 +317,7 @@ export function roofHoles(house) {
   };
   for (const f of L.flues || []) add(f, 'дымоход');
   for (const d of L.ducts || []) add(d, 'вентшахта');
+  if (L.riser) add(L.riser, 'фановый');
   return out;
 }
 

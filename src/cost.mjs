@@ -6,7 +6,7 @@
 // не видно границы, всегда «дешевле» настоящей.
 
 import { bill, feedsGeom } from './systems.mjs';
-import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom, drainGeom } from './roof.mjs';
+import { roofGeom, verandaGeom, pitGeom, porchGeom, flueTop, blindGeom, drainGeom, foundationBottom } from './roof.mjs';
 import { plotGeom } from './plot.mjs';
 
 const m2 = v => v / 1e6;                       // мм² -> м²
@@ -28,9 +28,11 @@ export function quantities(house, systems) {
   const cokol = lv('cokol'), first = lv('first'), second = lv('second');
 
   // ---- земля и фундамент ---------------------------------------------------
-  // до низа подготовки: пол цоколя, плита и подбетонка из данных фундамента
-  const digDepth = mm(-cokol.base)
-    + mm((house.foundation || {}).slab ?? 400) + mm((house.foundation || {}).lean ?? 100);
+  // Дно котлована — низ фундаментного пирога, тот же foundationBottom, что
+  // сажает тела в выгрузке. Раньше смета копала до подбетонки (−3,40), а
+  // модель клала песчаную подготовку до −3,70: два ответа на вопрос
+  // «докуда копать» — это не смета, а лотерея. Источник теперь один
+  const digDepth = mm(-foundationBottom(house));
   q.digDepth = digDepth;
   q.dig = (W + 2) * (H + 2) * digDepth * 1.15;  // с откосами
   // фундаментный пирог — из тех же данных, что и тела в выгрузке
@@ -52,8 +54,11 @@ export function quantities(house, systems) {
   const winArea = L => (L.windows || []).reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
   q.openFirst = winArea(first);
   q.openSecond = winArea(second);
-  q.lintels = house.levels.flatMap(L => [...(L.windows || []), ...(L.openings || [])])
-    .reduce((s, o) => s + mm((o.b ? o.b - o.a : o.w) + 500), 0);
+  // перемычки — из той же ведомости, что уходит на страницу: сборные и
+  // монолитные участки врозь, проёмы монолитного цоколя — вовсе не здесь
+  const lint = lintelSchedule(house);
+  q.lintels = lint.list.filter(r => !r.mono).reduce((s, r) => s + mm(r.len) * r.n, 0);
+  q.lintelMono = lint.list.filter(r => r.mono).reduce((s, r) => s + mm(r.len) * r.n, 0);
 
   // ---- газоблок и армопояса ------------------------------------------------
   const beamH = 0.3;
@@ -212,6 +217,87 @@ export function quantities(house, systems) {
 }
 
 // ---------------------------------------------------------------------------
+// ведомости: по ним заказывают, а не по строке «окна 19,7 м²»
+// ---------------------------------------------------------------------------
+
+// Ведомость заполнений: окна, двери, ворота и люки по маркам-типоразмерам.
+// Смета продаёт квадратные метры, а заказ делается по маркам: 12 окон девяти
+// типоразмеров с разными подоконниками из одной строки сметы не заказать
+export function openingSchedule(house) {
+  const rows = new Map();
+  const put = (cls, w, h, sill, note, id) => {
+    const key = `${cls}:${w}x${h}`;
+    if (!rows.has(key)) rows.set(key, { cls, w, h, n: 0, sills: new Set(), notes: new Set(), ids: [] });
+    const r = rows.get(key);
+    r.n++;
+    if (sill != null) r.sills.add(sill);
+    if (note) r.notes.add(note);
+    r.ids.push(id);
+  };
+  for (const L of house.levels) {
+    for (const o of L.windows || []) {
+      const cls = o.kind === 'gate' ? 'В' : o.kind === 'entrance' || o.kind === 'door' ? 'ДН'
+        : o.kind === 'hatch' ? 'Л' : 'ОК';
+      put(cls, o.b - o.a, o.hz, o.sill || 0,
+        o.pano ? 'панорамное' : o.kind === 'hatch' ? 'люк с приямком' : o.kind === 'entrance' ? 'входная' : '', o.id);
+    }
+    for (const o of (L.openings || []).filter(x => x.kind !== 'pass'))
+      put('ДВ', o.w, o.hz, null, o.fire ? 'противопожарная EI 30' : '', o.id);
+  }
+  const T = plotGeom(house)?.temp;
+  if (T) {
+    put('ДН', T.door.b - T.door.a, T.door.hz, 0, 'времянка', T.door.id);
+    for (const w of T.windows || []) put('ОК', w.b - w.a, w.hz, w.sill || 0, 'времянка', w.id);
+  }
+  const order = ['ОК', 'ДН', 'ДВ', 'В', 'Л'];
+  const list = [...rows.values()].sort((a, b) =>
+    order.indexOf(a.cls) - order.indexOf(b.cls) || b.w * b.h - a.w * a.h);
+  const cnt = {};
+  for (const r of list) {
+    cnt[r.cls] = (cnt[r.cls] || 0) + 1;
+    r.mark = `${r.cls}-${cnt[r.cls]}`;
+  }
+  return list;
+}
+
+// Ведомость перемычек: по толщине стены и ширине проёма, опирание 250 на
+// сторону. Проёмы монолитного цоколя перемычек не получают — их обрамление
+// уходит в КЖ; проём шире lintelWide несёт не сборная перемычка, а
+// монолитный участок по расчёту. Раньше всё это была одна строка
+// «61,5 п.м», по которой не заказать ничего
+export const LINTEL_WIDE = 1750;
+export function lintelSchedule(house) {
+  const S = house.shell;
+  const rows = new Map();
+  let cokol = 0;
+  const put = (th, span, id) => {
+    const mono = span > LINTEL_WIDE;
+    const key = `${th}x${span}${mono ? 'm' : ''}`;
+    if (!rows.has(key)) rows.set(key, { th, span, len: span + 500, mono, n: 0, ids: [] });
+    const r = rows.get(key);
+    r.n++;
+    r.ids.push(id);
+  };
+  for (const L of house.levels) {
+    // цоколь монолитный: проёмы обрамляются в теле стены, это КЖ
+    if (L.base < 0) {
+      cokol += (L.windows || []).length + (L.openings || []).length;
+      continue;
+    }
+    for (const o of L.windows || []) put(S.wall, o.b - o.a, o.id);
+    for (const o of L.openings || []) put(o.t, o.w, o.id);
+  }
+  const T = plotGeom(house)?.temp;
+  if (T) {
+    put(T.t, T.door.b - T.door.a, T.door.id);
+    for (const w of T.windows || []) put(T.t, w.b - w.a, w.id);
+  }
+  const list = [...rows.values()].sort((a, b) => b.th - a.th || b.span - a.span);
+  list.forEach((r, i) => { r.mark = r.mono ? `Пм-${i + 1}` : `Пр-${i + 1}`; });
+  return { list, cokol };
+}
+
+// ---------------------------------------------------------------------------
 // смета
 // ---------------------------------------------------------------------------
 export function estimate(house, systems, prices) {
@@ -239,7 +325,7 @@ export function estimate(house, systems, prices) {
 
   add('Коробка: стены и перекрытия', [
     ['block', q.block + q.blockInner], ['workBlock', q.block + q.blockInner],
-    ['partition', q.partition], ['lintel', q.lintels],
+    ['partition', q.partition], ['lintel', q.lintels], ['lintelMono', q.lintelMono],
     ['concrete', q.slabFloor + q.beam], ['rebar', q.rebarFloor + q.rebarBeam],
     ['workFloor', q.slabFloor], ['workBeam', q.beam]
   ]);
@@ -264,7 +350,10 @@ export function estimate(house, systems, prices) {
   add('Инженерия', [
     ['cableP', eom['ВВГнг-LS 3×2,5']], ['cableL', eom['ВВГнг-LS 3×1,5']],
     ['cable5x4', eom['ВВГнг-LS 5×4']], ['cable5x6', eom['ВВГнг-LS 5×6, питающая']],
-    ['pex20', vk['PEX 20']], ['pp50', vk['ПП 50']], ['pex25', (vk['PEX 25, стояк'] || 0) + (ov['PEX 25, магистраль'] || 0)],
+    ['pex20', vk['PEX 20']], ['pp50', vk['ПП 50']],
+    ['pp110i', (vk['ПП 110'] || 0) + (vk['ПП 110, стояк и фановый выход'] || 0)],
+    ['knsUnit', dev('kns')], ['knsPipe', vk['ПНД 40, напорная от КНУ']],
+    ['pex25', (vk['PEX 25, стояк'] || 0) + (ov['PEX 25, магистраль'] || 0)],
     ['pex16', (ov['PEX 16, подача и обратка'] || 0) + (ov['PEX 16, контур тёплого пола'] || 0)],
     ['duct125', ov['воздуховод 125']],
     ['feedWater', vk['ПНД 32, ввод воды']], ['feedSewer', vk['ПП 110, выпуск канализации']],

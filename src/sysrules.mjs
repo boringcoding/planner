@@ -200,7 +200,9 @@ export function checkSystems(house, data) {
     if (sys.id === 'vk')
       for (const L of house.levels)
         for (const g of L.furniture || []) {
-          const need = { sink: ['cold', 'drain'], wc: ['cold', 'drain'], bath: ['cold', 'drain'], shower: ['cold', 'drain'], washerCol: ['cold', 'drain'], kitchen: ['cold', 'drain'] }[g.sym];
+          // унитаз — только на 110-й: посадить его на 50-ю трубу можно
+          // одним словом в данных, и на плане это не видно никак
+          const need = { sink: ['cold', 'drain'], wc: ['cold', 'drain110'], bath: ['cold', 'drain'], shower: ['cold', 'drain'], washerCol: ['cold', 'drain'], kitchen: ['cold', 'drain'] }[g.sym];
           if (!need) continue;
           for (const k of need)
             if (!sys.points.some(p => p.host === g.id && p.kind === k))
@@ -219,6 +221,21 @@ export function checkSystems(house, data) {
       if (sys.id === 'eom') need.push(['power', 'кабельного ввода']);
       for (const [k, name] of need)
         if (!feeds.some(f => f.kind === k)) E(`дом не подключить: нет ${name}`);
+      // 9г. приборы ниже лотка выпуска самотёком не уходят: в списке точек
+      // трап цоколя выглядит так же уверенно, как трап второго этажа, а
+      // физически он на метр ниже трубы, в которую должен стекать. На таком
+      // уровне обязана стоять КНУ, и её напор — отдельная строка ведомости
+      {
+        const sewer = feeds.find(x => x.kind === 'sewer' && !x.pressure && !x.target);
+        if (sewer)
+          for (const L of house.levels) {
+            const low = sys.points.filter(p => p.level === L.id
+              && (p.kind === 'drain' || p.kind === 'drain110')
+              && L.base + p.z < -sewer.depth);
+            if (low.length && !sys.points.some(p => p.level === L.id && p.kind === 'kns'))
+              E(`«${L.title}»: ${low.length} слив(ов) ниже лотка выпуска −${sewer.depth} — самотёком не уйдут, нужна КНУ`);
+          }
+      }
       const frost = house.site.frost || 0;
       for (const f of feeds) {
         if (f.kind === 'water' && f.depth < frost + 300)

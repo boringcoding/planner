@@ -684,6 +684,19 @@ export function ifc(house, systems = [], opt = {}) {
         str(`${d.id}.over`), '.ELEMENT.']);
       put(top.st, el);
     }
+    // фановый выход канализационного стояка: труба 110 от чердачного
+    // перекрытия на 300 над скатом — без неё дыра в скате и сорванные затворы
+    if (top.lv.riser) {
+      const q = top.lv.riser;
+      const topZ = Math.round(g.zAt(q.x + q.w / 2, q.y + q.h / 2)) + 300;
+      const el = E('IFCPIPESEGMENT', [G(`vent:${q.id}`), owner, str('Фановый выход стояка'), '$', '$',
+        place(top.pl, q.x + q.w / 2, Y(q.y + q.h / 2), overZ0),
+        bodyOf([paint(cylSolid(55, topZ - top.lv.base - overZ0), 'vk')]),
+        str(`${q.id}.over`), '.RIGIDSEGMENT.']);
+      put(top.st, el);
+      matOf('ПП 110', el);
+      addProps(el, `vent:${q.id}`, [['id', `${q.id}.over`], ['top', topZ]]);
+    }
 
     // Фронтоны. Без них под скатами открытый треугольник с обоих торцов —
     // дом с дырой на чердак. Профиль один на смету, выгрузку и проверку:
@@ -1120,6 +1133,8 @@ export function ifc(house, systems = [], opt = {}) {
     cold: ['IFCVALVE', '.ISOLATING.', 'Подводка ХВС'],
     hot: ['IFCVALVE', '.ISOLATING.', 'Подводка ГВС'],
     drain: ['IFCWASTETERMINAL', '.FLOORTRAP.', 'Выпуск канализации'],
+    drain110: ['IFCWASTETERMINAL', '.WASTETRAP.', 'Подводка канализации 110'],
+    kns: ['IFCPUMP', '.SUBMERSIBLEPUMP.', 'КНУ цокольных стоков'],
     ufh: ['IFCSPACEHEATER', '.NOTDEFINED.', 'Контур тёплого пола'],
     radiator: ['IFCSPACEHEATER', '.RADIATOR.', 'Радиатор'],
     convector: ['IFCSPACEHEATER', '.CONVECTOR.', 'Конвектор внутрипольный'],
@@ -1189,6 +1204,8 @@ export function ifc(house, systems = [], opt = {}) {
       cold: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       hot: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       drain: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 60],
+      drain110: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 110],
+      kns: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 40],
       ufh: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       radiator: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],
       convector: ['IFCPIPESEGMENT', '.RIGIDSEGMENT.', 25],

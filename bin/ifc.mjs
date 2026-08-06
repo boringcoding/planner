@@ -83,7 +83,7 @@ const flues = house.levels[house.levels.length - 1].flues || [];
 // магистраль, плюс жёлоб и трубы водостока. Класс — по виду точки,
 // как в экспорте: воздуховоды, трубы, кабельные каналы
 const segCls = kind => kind === 'supply' || kind === 'exhaust' ? 'IFCDUCTSEGMENT'
-  : ['cold', 'hot', 'drain', 'radiator', 'convector', 'ufh'].includes(kind) ? 'IFCPIPESEGMENT'
+  : ['cold', 'hot', 'drain', 'drain110', 'kns', 'radiator', 'convector', 'ufh'].includes(kind) ? 'IFCPIPESEGMENT'
     : 'IFCCABLECARRIERSEGMENT';
 const nSeg = { IFCPIPESEGMENT: 0, IFCDUCTSEGMENT: 0, IFCCABLECARRIERSEGMENT: 0 };
 const bills = systems.map(sys => ({ sys, b: bill(house, sys) }));
@@ -93,6 +93,8 @@ for (const { sys, b } of bills) {
 }
 const gut = roofOn ? gutterGeom(house) : null;
 if (gut) nSeg.IFCPIPESEGMENT += gut.gutters.length + gut.drains.length;
+// фановый выход стояка над кровлей
+if (roofOn && house.levels[house.levels.length - 1].riser) nSeg.IFCPIPESEGMENT += 1;
 // пристенный дренаж и наружные вводы
 nSeg.IFCPIPESEGMENT += drainGeom(house).ring.length;
 for (const sys of systems)
@@ -158,7 +160,7 @@ if (![...ents.values()].some(e => e.type === 'IFCSURFACESTYLERENDERING' && /,0\.
 
 // 5. точки разделов на месте
 const mep = ['IFCOUTLET', 'IFCLAMP', 'IFCSWITCHINGDEVICE', 'IFCVALVE', 'IFCWASTETERMINAL',
-  'IFCSPACEHEATER', 'IFCAIRTERMINAL', 'IFCCOMMUNICATIONSAPPLIANCE', 'IFCSENSOR']
+  'IFCSPACEHEATER', 'IFCAIRTERMINAL', 'IFCCOMMUNICATIONSAPPLIANCE', 'IFCSENSOR', 'IFCPUMP']
   .reduce((s, t) => s + count(t), 0);
 if (mep !== points) errs.push(`точек разделов ${points}, элементов инженерии ${mep}`);
 

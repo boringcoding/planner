@@ -1,7 +1,7 @@
 // Правила проверки планировки. Каждый найденный дефект добавляется сюда,
 // а не чинится единичной правкой координаты.
 
-import { labelBoxes, roofLabelBoxes, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
+import { labelBoxes, roofLabelBoxes, facadeLabelBoxes, sectionLabelBoxes, FACADE_SIDES, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
 import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits, plotMargins } from './roof.mjs';
 import { plotGeom } from './plot.mjs';
 
@@ -79,7 +79,8 @@ export const LIMITS = {
   septicService: 5000,     // не дальше этого от красной линии: обслуживание с улицы
   gateW: 3500,             // въездные ворота: проезд пожарной машины
   wicketW: 1000,           // калитка
-  gateAxisSnap: 150        // ось въезда против оси гаражного фронта
+  gateAxisSnap: 150,       // ось въезда против оси гаражного фронта
+  lintelMax: 3200          // шире — не перемычка и не монолитный участок, а балка
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -1009,6 +1010,19 @@ export function check(house, brief) {
           errs.push(`кровля: подписи наезжают: ${rb[i].kind} «${rb[i].owner}» и ${rb[j].kind} «${rb[j].owner}»`);
   }
 
+  // 40. фасады и разрез раскладываются теми же рамками, что и остальные
+  // листы, и проверяются тем же способом — по каждому листу отдельно.
+  // Оба листа строятся от кровли: без неё их нет, и ругается правило 29
+  if (house.roof) {
+    const sheets = [...FACADE_SIDES.map(([sd]) => [`фасад ${sd}`, facadeLabelBoxes(house, sd)]),
+    ['разрез', sectionLabelBoxes(house)]];
+    for (const [name, bx] of sheets)
+      for (let i = 0; i < bx.length; i++)
+        for (let j = i + 1; j < bx.length; j++)
+          if (overlap(shrink(bx[i], LIMITS.labelClear), shrink(bx[j], LIMITS.labelClear)) > 0)
+            errs.push(`${name}: подписи наезжают: ${bx[i].kind} «${bx[i].owner}» и ${bx[j].kind} «${bx[j].owner}»`);
+  }
+
   // 36. фундамент — решение, а не заглушка: пирог задан в данных и не тоньше
   // разумного. Плита посчитана на стены трёх уровней, подушка дренирует,
   // подбетонка держит гидроизоляцию — убрать любое из этого молча нельзя
@@ -1185,6 +1199,17 @@ export function check(house, brief) {
       else if (master.y + master.h / 2 < S.h / 2)
         errs.push(`спальня хозяев «${master.name}» стоит в уличной половине дома`);
     }
+  }
+
+  // 39. перемычки. Сборные и монолитные участки раскладывает ведомость,
+  // но за 3200 не лезет уже и монолитный участок: такой проём несёт балка
+  // по отдельному расчёту, и появиться он должен решением, а не правкой числа
+  for (const L of house.levels) {
+    if (L.base < 0) continue;                    // цоколь монолитный, там КЖ
+    for (const o of [...(L.windows || []).map(w => ({ id: w.id, span: w.b - w.a })),
+    ...(L.openings || []).map(q => ({ id: q.id, span: q.w }))])
+      if (o.span > LIMITS.lintelMax)
+        errs.push(`проём ${o.id} шириной ${o.span} — перемычки такой нет, нужна балка по расчёту`);
   }
 
   // 38. участок. Дом, времянка и септик разводятся не друг с другом,

@@ -391,6 +391,9 @@ const CASES = [
 
   ['дверь времянки развернули в забор', /дверь времянки/,
     h => { h.project.plot.temp.door.side = 'N'; }],
+
+  ['ворота растянули за предел перемычки', /нужна балка по расчёту/,
+    h => { lvl(h, 'first').windows.find(w => w.id === 'first.g1').b = 4200; }],
 ];
 
 // правила разделов: ломается data/systems.json, дом остаётся прежним
@@ -512,7 +515,13 @@ const SCASES = [
     d => { sys(d, 'vk').feeds.find(f => f.id === 'vk.out1').depth = 1900; }],
 
   ['труба нырнула под времянку', /проходит под времянкой/,
-    d => { sys(d, 'vk').feeds.find(f => f.id === 'vk.out2').exit.side = 'W'; }]
+    d => { sys(d, 'vk').feeds.find(f => f.id === 'vk.out2').exit.side = 'W'; }],
+
+  ['КНУ пропала из цоколя', /самотёком не уйдут, нужна КНУ/,
+    d => { const s = sys(d, 'vk'); s.points = s.points.filter(p => p.kind !== 'kns'); }],
+
+  ['унитаз посадили на 50-ю трубу', /без подводки «канализация 110»/,
+    d => { sys(d, 'vk').points.find(p => p.id === 'vk.p13').kind = 'drain'; }]
 ];
 
 const base = check(house, brief);

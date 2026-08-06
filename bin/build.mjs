@@ -1,7 +1,7 @@
 // Сборка всех листов в out/: планы уровней, планы по разделам, развёртки.
 
 import fs from 'node:fs';
-import { renderLevel, renderSystem, renderRoof, renderPlot, explication } from '../src/render.mjs';
+import { renderLevel, renderSystem, renderRoof, renderPlot, renderFacade, renderSection, FACADE_SIDES, explication } from '../src/render.mjs';
 import { roofGeom, verandaGeom, plotMargins } from '../src/roof.mjs';
 import { plotGeom } from '../src/plot.mjs';
 import { renderElevation, elevationRooms } from '../src/elev.mjs';
@@ -30,6 +30,11 @@ fs.writeFileSync('out/roof.svg', renderRoof(house));
   if (V) console.log(`  ${'веранда: настил / навес'.padEnd(30)} ${V.deckArea.toFixed(1)} / ${V.canopyArea.toFixed(1)} м²`);
   console.log('');
 }
+
+for (const [side] of FACADE_SIDES)
+  fs.writeFileSync(`out/facade-${side}.svg`, renderFacade(house, side));
+fs.writeFileSync('out/section.svg', renderSection(house));
+console.log('Фасады: 4 листа · Разрез 1-1\n');
 
 {
   const svg = renderPlot(house, systems);
