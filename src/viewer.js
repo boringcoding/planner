@@ -117,6 +117,9 @@
       say('читаю house.ifc…');
       const buf = await (await fetch('house.ifc')).arrayBuffer();
       const model = api.OpenModel(new Uint8Array(buf));
+      // маршрут прогулки собирает сборка сайта из тех же данных, что и модель;
+      // нет файла — просто нет кнопки, смотрелка без него живёт
+      const tourData = await fetch('tour.json').then(r => r.ok ? r.json() : null).catch(() => null);
 
       // элемент -> этаж и элемент -> раздел: связи берём из файла, а не
       // угадываем по типу, иначе розетка данных уедет в электрику
@@ -382,6 +385,73 @@
         `rgb(${(COLOR[g] || [0.5, 0.5, 0.5]).map(v => Math.round(v * 255)).join(',')})`]), on);
       chips('уровни', storeys.map(s => [s.id, s.name]), levelOn);
 
+      // ---- прогулка -------------------------------------------------------
+      // камера идёт по маршруту из tour.json: высота глаз и скорость шага
+      // заданы там же, где маршрут посчитан. Путь выведен тем же телом 550,
+      // что и правило проходимости, поэтому сквозь мебель она не срезает
+      const tour = { on: false, eye: null, aim: null, dir: null, t0: 0, last: 0, save: null };
+      const tourP = [], tourT = [], tourC = [0];
+      if (tourData && tourData.pts && tourData.pts.length > 1) {
+        // мм и Z-вверх файла -> метры и Y-вверх движка, как spaceBox
+        let name = '';
+        for (const p of tourData.pts) {
+          tourP.push([p.x / 1000, (p.z + tourData.eye) / 1000, -p.y / 1000]);
+          if (p.t) name = p.t;
+          tourT.push(name);
+        }
+        for (let i = 1; i < tourP.length; i++) {
+          const a = tourP[i - 1], b = tourP[i];
+          tourC.push(tourC[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+        }
+      }
+      const tourAt = s => {
+        let i = 0;
+        while (i < tourC.length - 2 && tourC[i + 1] < s) i++;
+        const f = Math.min(1, Math.max(0, (s - tourC[i]) / (tourC[i + 1] - tourC[i] || 1)));
+        return { p: [0, 1, 2].map(k => tourP[i][k] + (tourP[i + 1][k] - tourP[i][k]) * f), i };
+      };
+      let tourBtn = null;
+      function tourFrame(now) {
+        if (!tour.on) return;
+        const s = (now - tour.t0) / 1000 * (tourData.speed / 1000);
+        const total = tourC[tourC.length - 1];
+        if (s >= total) { stopTour(); return; }
+        const { p: pos, i } = tourAt(s);
+        // взгляд — вперёд по ходу, со сглаживанием: голова не дёргается
+        // на углах маршрута, а на лестнице сама опускается вдоль марша
+        const ahead = tourAt(Math.min(total, s + 1.6)).p;
+        const want = norm([ahead[0] - pos[0], ahead[1] - pos[1], ahead[2] - pos[2]]);
+        const dt = Math.min(0.1, (now - tour.last) / 1000); tour.last = now;
+        const k = 1 - Math.exp(-dt / 0.4);
+        tour.dir = norm([0, 1, 2].map(a => tour.dir[a] + (want[a] - tour.dir[a]) * k));
+        tour.eye = pos;
+        tour.aim = [pos[0] + tour.dir[0], pos[1] + tour.dir[1], pos[2] + tour.dir[2]];
+        say('прогулка · ' + (tourT[i + 1] || tourT[i]));
+        draw();
+        requestAnimationFrame(tourFrame);
+      }
+      function startTour() {
+        if (tourP.length < 2 || tour.on) return;
+        tour.save = { yaw, pitch, dist, centre: [...centre], mn: [...clip.mn], mx: [...clip.mx], top: clip.top, topFull: clip.topFull };
+        // прогулка ходит по всему дому: срез и изоляция помещения снимаются
+        clip.mn = box.mn.map(v => v - pad); clip.mx = box.mx.map(v => v + pad);
+        clip.topFull = box.mx[1] + pad; clip.top = clip.topFull;
+        tour.on = true; tour.t0 = performance.now(); tour.last = tour.t0;
+        tour.dir = norm([0, 1, 2].map(k => tourP[1][k] - tourP[0][k]));
+        tourBtn.classList.add('on');
+        requestAnimationFrame(tourFrame);
+      }
+      function stopTour() {
+        if (!tour.on) return;
+        tour.on = false;
+        const s = tour.save;
+        yaw = s.yaw; pitch = s.pitch; dist = s.dist; centre = s.centre;
+        clip.mn = s.mn; clip.mx = s.mx; clip.top = s.top; clip.topFull = s.topFull;
+        tourBtn.classList.remove('on');
+        say(baseline());
+        draw();
+      }
+
       // ---- камера ---------------------------------------------------------
       let yaw = -0.7, pitch = 0.62, dist = span * 1.5;
       const HOME = { yaw: -0.7, pitch: 0.62 };
@@ -400,8 +470,15 @@
         for (const [name, v] of VIEWS) {
           const b = document.createElement('button');
           b.type = 'button'; b.className = 'v-chip'; b.textContent = name;
-          b.onclick = () => { yaw = v.yaw; pitch = v.pitch; dist = span * 1.5; draw(); };
+          b.onclick = () => { stopTour(); yaw = v.yaw; pitch = v.pitch; dist = span * 1.5; draw(); };
           wrap.appendChild(b);
+        }
+        // прогулка: со входа через все помещения, глазами человека
+        if (tourP.length > 1) {
+          tourBtn = document.createElement('button');
+          tourBtn.type = 'button'; tourBtn.className = 'v-chip'; tourBtn.textContent = 'прогулка';
+          tourBtn.onclick = () => { tour.on ? stopTour() : startTour(); };
+          wrap.appendChild(tourBtn);
         }
         // полупрозрачная оболочка: стены, перекрытия и кровля пропускают
         // взгляд к начинке — трассам, мебели, лестнице
@@ -420,6 +497,7 @@
         range.type = 'range'; range.min = '0'; range.max = '1000'; range.value = '1000';
         range.className = 'v-range';
         range.oninput = () => {
+          stopTour();                    // срез и прогулка делят один клип-бокс
           const t = +range.value / 1000;
           clip.top = clip.mn[1] + (clip.topFull - clip.mn[1]) * t;
           draw();
@@ -443,6 +521,7 @@
         // изоляция помещения — клип-бокс по его габариту с припуском на стены:
         // видно стены, проёмы, мебель и точки разделов именно этого помещения
         sel2.onchange = () => {
+          stopTour();
           if (!sel2.value) {
             clip.mn = box.mn.map(v => v - pad); clip.mx = box.mx.map(v => v + pad);
             clip.topFull = box.mx[1] + pad; clip.top = clip.topFull;
@@ -471,6 +550,7 @@
       };
       let pinch0 = 0;
       canvas.addEventListener('pointerdown', e => {
+        stopTour();                      // взялся за модель — прогулка кончилась
         touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (touches.size === 2) { pinch0 = pinchDist(); drag.on = false; }
         else { drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0; }
@@ -504,6 +584,7 @@
       });
       canvas.addEventListener('wheel', e => {
         e.preventDefault();
+        stopTour();
         dist = Math.max(span * 0.1, Math.min(span * 5, dist * (1 + Math.sign(e.deltaY) * 0.12)));
         draw();
       }, { passive: false });
@@ -524,12 +605,16 @@
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        const eye = [
+        // на прогулке камера стоит в точке маршрута и смотрит по ходу;
+        // ближняя плоскость поджимается, иначе дверные косяки срезаются
+        const eye = tour.on && tour.eye ? tour.eye : [
           centre[0] + dist * Math.cos(pitch) * Math.sin(yaw),
           centre[1] + dist * Math.sin(pitch),
           centre[2] + dist * Math.cos(pitch) * Math.cos(yaw)
         ];
-        const vp = mul(persp(0.9, w / h, span * 0.02, span * 12), lookAt(eye, centre, [0, 1, 0]));
+        const aim = tour.on && tour.aim ? tour.aim : centre;
+        const near = tour.on ? 0.06 : span * 0.02;
+        const vp = mul(persp(0.9, w / h, near, span * 12), lookAt(eye, aim, [0, 1, 0]));
         gl.useProgram(prog);
         gl.uniformMatrix4fv(uMvp, false, vp);
         gl.uniformMatrix3fv(uNm, false, new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]));

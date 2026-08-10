@@ -394,6 +394,12 @@ const CASES = [
 
   ['ворота растянули за предел перемычки', /нужна балка по расчёту/,
     h => { lvl(h, 'first').windows.find(w => w.id === 'first.g1').b = 4200; }],
+
+  ['комната выпала из прогулки', /не попала в маршрут/,
+    h => { lvl(h, 'second').openings = lvl(h, 'second').openings.filter(o => o.id !== 'second.o7'); }],
+
+  ['входа нет — прогулке не начаться', /прогулке неоткуда начаться/,
+    h => { lvl(h, 'first').windows.find(w => w.kind === 'entrance').kind = 'door'; }],
 ];
 
 // правила разделов: ломается data/systems.json, дом остаётся прежним

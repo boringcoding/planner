@@ -4,6 +4,7 @@
 import { labelBoxes, roofLabelBoxes, facadeLabelBoxes, sectionLabelBoxes, FACADE_SIDES, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
 import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits, plotMargins } from './roof.mjs';
 import { plotGeom } from './plot.mjs';
+import { tour } from './tour.mjs';
 
 export const LIMITS = {
   doorClearance: 900,      // глубина свободной зоны перед проёмом
@@ -1321,6 +1322,16 @@ export function check(house, brief) {
           errs.push('проезд не примыкает к въездным воротам во всю их ширину');
       }
     }
+  }
+
+  // 41. прогулка. Маршрут 3D-обхода выводится из этих же данных и уходит
+  // на сайт. Помещение, выпавшее из маршрута, или пол, по которому от двери
+  // до двери не пройти, — дефект данных: на странице камера молча пролетит
+  // мимо, и никто этого не заметит
+  try {
+    for (const p of tour(house).problems) errs.push(`прогулка: ${p}`);
+  } catch (e) {
+    errs.push(`прогулка: маршрут не построился — ${e.message}`);
   }
 
   return errs;

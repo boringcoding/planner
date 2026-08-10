@@ -10,6 +10,7 @@ import { renderElevation, elevationRooms } from '../src/elev.mjs';
 import { bill } from '../src/systems.mjs';
 import { ifc } from '../src/ifc.mjs';
 import { openingSchedule, lintelSchedule } from '../src/cost.mjs';
+import { tour, TOUR } from '../src/tour.mjs';
 
 const read = n => JSON.parse(fs.readFileSync(new URL(`../data/${n}`, import.meta.url)));
 const house = read('house.json');
@@ -265,7 +266,8 @@ const viewerSection = hasEngine ? `
           про этот репозиторий: на экране выгрузка, а не наша геометрия, нарисованная второй раз.
           Клик по элементу говорит, что это; alt-клик по фишке слоя оставляет только его;
           срез режет дом по высоте, список помещений изолирует одно; «оболочка 40%»
-          показывает трассы разделов сквозь стены.</p>
+          показывает трассы разделов сквозь стены. «Прогулка» проводит камеру со входа
+          через все помещения — на высоте глаз и со скоростью шага.</p>
       </div>
       <div class="viewer" id="viewer">
         <div class="v-panel"></div>
@@ -462,6 +464,13 @@ fs.writeFileSync('site/house.ifc', ifcText);
 if (hasEngine) {
   fs.copyFileSync(new URL('../src/viewer.js', import.meta.url), 'site/viewer.js');
   for (const f of WEB_IFC) fs.copyFileSync(new URL(f, engineDir), `site/${f}`);
+  // маршрут прогулки — в мировых координатах модели: план отражается по Y,
+  // тем же зеркалом, что и вся выгрузка в src/ifc.mjs. Забыть — камера
+  // пойдёт по зеркальному дому и упрётся в стены
+  fs.writeFileSync('site/tour.json', JSON.stringify({
+    eye: TOUR.eye, speed: TOUR.speed,
+    pts: tour(house).pts.map(p => ({ ...p, y: house.shell.h - p.y }))
+  }));
 }
 console.log(`site/index.html + ${levels.length + (house.roof ? 1 : 0) + bills.length * house.levels.length + elevs.length} SVG`
   + ` + house.ifc${hasEngine ? ' + смотрелка' : ' (движок не установлен, 3D без него)'}`);

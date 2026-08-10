@@ -86,11 +86,19 @@ const shotChip = async (text, file) => {
 };
 await shotChip('юз', 'out/viewer-sw.png');
 await shotChip('св', 'out/viewer-ne.png');
+// прогулка: камера внутри дома на высоте глаз. Несколько секунд хода —
+// и снимается интерьер; по нему видно, что маршрут не срезает сквозь стены
+await page.locator('.v-chip', { hasText: 'прогулка' }).first().click();
+await page.waitForTimeout(6000);
+const tourStatus = await page.locator('.v-status').textContent();
+if (!/прогулка/.test(tourStatus)) problems.push(`прогулка не пошла: статус «${tourStatus.trim()}»`);
+await page.locator('#viewer').screenshot({ path: 'out/viewer-tour.png' });
+await page.locator('.v-chip', { hasText: 'прогулка' }).first().click();
 await shotChip('оболочка 40%', 'out/viewer-ghost.png');
 await browser.close();
 server.close();
 
-console.log(`out/viewer.png · out/viewer-sw.png · out/viewer-ne.png · out/viewer-ghost.png · out/site.png`);
+console.log(`out/viewer.png · out/viewer-sw.png · out/viewer-ne.png · out/viewer-tour.png · out/viewer-ghost.png · out/site.png`);
 console.log(`  смотрелка: ${status.trim()}`);
 if (problems.length) {
   console.log(`  браузер ругается (${problems.length}):`);
