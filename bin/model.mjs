@@ -108,6 +108,24 @@ for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW',
     if (/^plot\.(fence|gate|wicket|drive|walk)/.test(String(t.value))) groupOf.set(e, 'site');
     else if (/^plot\.t/.test(String(t.value))) groupOf.set(e, 'temp');
   }
+// Сторож той самой пары. Список классов, у которых вообще смотрят метку,
+// живёт в двух файлах, и он обязан совпадать: забудь в нём один класс —
+// и 24 сваи, 10 балок ростверка, 8 стоек и 41 ограждение уедут в слой
+// «Веранда и крыльцо» и погаснут вместе с верандой. Ни один счётчик этого
+// не увидит: слой «Времянка» остаётся непустым, тела в файле на месте.
+// Поэтому список сверяется с исходником смотрелки текстом, а метка —
+// перебором ВСЕХ типов, а не тех же девяти
+{
+  const src = fs.readFileSync(new URL('../src/viewer.js', import.meta.url), 'utf8');
+  const list = t => {
+    const m = t.match(/for \(const cls of \[([^\]]*)\]\)\s*\n?\s*for \(const e of ids\(api\.GetLineIDsWithType\(model, WebIFC\[cls\]\)\)\)/);
+    return m ? m[1].replace(/\s+/g, '') : null;
+  };
+  const mine = list(fs.readFileSync(new URL(import.meta.url), 'utf8')), theirs = list(src);
+  if (!mine || !theirs) errs.push('список классов метки plot.t* не читается — сторож пары ослеп');
+  else if (mine !== theirs)
+    errs.push(`список классов метки расходится: проверка ${mine}, смотрелка ${theirs}`);
+}
 const sysOf = new Map();
 for (const rid of ids(api.GetLineIDsWithType(model, WebIFC.IFCRELASSIGNSTOGROUP))) {
   const r = api.GetLine(model, rid);
@@ -277,6 +295,14 @@ if (house.roof) {
     if (PG.temp) {
       const T = PG.temp;
       const tag = e => { const t = api.GetLine(model, e).Tag; return t ? String(t.value) : ''; };
+      // метка сильнее типа: тело с plot.t* обязано оказаться в слое «Времянка»,
+      // какого бы класса оно ни было. Проёмы сюда не идут — они вычитаются,
+      // а не рисуются, и геометрии у них нет по определению
+      for (const [e, b] of elBox) {
+        if (!/^plot\.t/.test(tag(e))) continue;
+        if (groupOf.get(e) !== 'temp')
+          errs.push(`${tag(e)} рисуется в слое «${groupOf.get(e) || 'без слоя'}», а не во «Времянке» — класса нет в списке метки`);
+      }
       const pick = re => {
         const b = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12], n: 0 };
         for (const [e, q] of elBox) {

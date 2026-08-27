@@ -215,9 +215,12 @@ export function feedsGeom(house, sys) {
       continue;
     }
     const T = g.temp, Q = g.septic, lot = g.lot;
-    // точка на стене времянки
-    const tempPt = (side, at) => side === 'S' ? { x: at, y: T.y } : side === 'N' ? { x: at, y: T.y + T.h }
-      : side === 'W' ? { x: T.x, y: at } : { x: T.x + T.w, y: at };
+    // Точка на стене времянки, а не на её габарите: южные 2945 мм габарита —
+    // открытая терраса на сваях, стены там нет, и ввод, посаженный на T.y,
+    // приходил бы в воздух под настилом. Считается от отапливаемого блока
+    const B = T.block || { x: T.x, y: T.y, w: T.w, h: T.h };
+    const tempPt = (side, at) => side === 'S' ? { x: at, y: B.y } : side === 'N' ? { x: at, y: B.y + B.h }
+      : side === 'W' ? { x: B.x, y: at } : { x: B.x + B.w, y: at };
     let xy = [], wells = [];
     if (f.target === 'temp' && f.enter && T) {
       // от узла у красной линии — фронтальной горизонталью, потом боковой
