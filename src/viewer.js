@@ -299,6 +299,9 @@
 
       const parts = [];
       const box = { mn: [1e9, 1e9, 1e9], mx: [-1e9, -1e9, -1e9] };
+      // габарит каждого элемента: по нему двойной клик переносит точку
+      // вращения на то, во что ткнули
+      const elBox = new Map();
       for (const [key, b] of buckets) {
         if (!b.idx.length) continue;
         const vao = gl.createVertexArray();
@@ -312,12 +315,18 @@
         gl.bindVertexArray(null);
         const [group, storey] = key.split('|');
         parts.push({ group, storey: +storey, vao, count: b.idx.length });
-        for (let i = 0; i < b.pos.length; i += 3)
+        for (let i = 0; i < b.pos.length; i += 3) {
+          const e = b.eid[i / 3];
+          let q = elBox.get(e);
+          if (!q) { q = { mn: [1e9, 1e9, 1e9], mx: [-1e9, -1e9, -1e9] }; elBox.set(e, q); }
           for (let a = 0; a < 3; a++) {
             const v = b.pos[i + a];
             if (v < box.mn[a]) box.mn[a] = v;
             if (v > box.mx[a]) box.mx[a] = v;
+            if (v < q.mn[a]) q.mn[a] = v;
+            if (v > q.mx[a]) q.mx[a] = v;
           }
+        }
       }
       const centre0 = box.mn.map((v, i) => (v + box.mx[i]) / 2);
       const span = Math.max(...box.mx.map((v, i) => v - box.mn[i]));
@@ -336,7 +345,9 @@
       };
       let ghost = false;                  // полупрозрачная оболочка
       let sel = -1;                       // подсвеченный элемент
-      const baseline = () => `${(buf.byteLength / 1024).toFixed(0)} КБ · ${tri.toLocaleString('ru')} треугольников · тяните мышью, колесо — приблизить, клик — что это`;
+      const baseline = () => `${(buf.byteLength / 1024).toFixed(0)} КБ · ${tri.toLocaleString('ru')} треугольников`
+        + ` · тяните — поворот, правой кнопкой или Shift — сдвиг, колесо — приблизить`
+        + ` · клик — что это, двойной клик — камера вокруг него`;
 
       panel.innerHTML = '';
       const chipRows = [];
@@ -454,8 +465,36 @@
       }
 
       // ---- камера ---------------------------------------------------------
+      // Орбита вокруг одной точки хороша для дома целиком и бесполезна,
+      // когда надо разглядеть времянку в дальнем углу участка: она уезжает
+      // за край экрана, и приблизить её нечем — зум идёт к середине.
+      // Поэтому камера умеет ещё и сдвигаться. Двигается не она, а точка,
+      // вокруг которой она вращается: тогда поворот и зум продолжают
+      // работать относительно того, на что смотришь
       let yaw = -0.7, pitch = 0.62, dist = span * 1.5;
       const HOME = { yaw: -0.7, pitch: 0.62 };
+      const FOV = 0.9;                   // тот же угол, что в persp ниже
+      const camAxes = () => {
+        const f = [-Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch), -Math.cos(pitch) * Math.cos(yaw)];
+        const r = norm(cross(f, [0, 1, 0]));
+        return { r, u: cross(r, f) };
+      };
+      // Сдвиг в мировых единицах на пиксель считается от расстояния и угла
+      // зрения, а не подбирается константой: иначе вблизи модель улетает
+      // от одного движения, а издалека не сдвигается вовсе
+      const panBy = (dx, dy) => {
+        const { r, u } = camAxes();
+        const k = 2 * dist * Math.tan(FOV / 2) / Math.max(1, canvas.clientHeight);
+        for (let a = 0; a < 3; a++) centre[a] += (-dx * r[a] + dy * u[a]) * k;
+      };
+      const home = () => {
+        yaw = HOME.yaw; pitch = HOME.pitch; dist = span * 1.5; centre = [...centre0];
+      };
+      // Ближе ближней плоскости (span * 0.02) камеру пускать нельзя — модель
+      // начнёт срезаться. Предел с запасом: к двери подойти можно, сквозь
+      // неё провалиться нельзя
+      const DIST_MIN = span * 0.03, DIST_MAX = span * 5;
+      const clampDist = d => Math.max(DIST_MIN, Math.min(DIST_MAX, d));
       // соответствие выверено по TrueNorth выгрузки: план рисуется Y вниз,
       // экспорт отражает Y, движок отдаёт Y вверх — угол здесь не выводится
       // в уме, а проверяется скриншотом фасада с воротами (юго-запад)
@@ -468,10 +507,21 @@
         const wrap = document.createElement('div');
         wrap.className = 'v-row';
         wrap.innerHTML = `<span class="v-title">камера</span>`;
+        // Пресет разворачивает камеру и только: приближение и точку, вокруг
+        // которой она стоит, он не трогает. Иначе, подъехав к времянке,
+        // нельзя обойти её по фасадам — каждый пресет отбрасывал бы обратно
+        // к общему плану участка
         for (const [name, v] of VIEWS) {
           const b = document.createElement('button');
           b.type = 'button'; b.className = 'v-chip'; b.textContent = name;
-          b.onclick = () => { stopTour(); yaw = v.yaw; pitch = v.pitch; dist = span * 1.5; draw(); };
+          b.onclick = () => { stopTour(); yaw = v.yaw; pitch = v.pitch; draw(); };
+          wrap.appendChild(b);
+        }
+        {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'v-chip'; b.textContent = 'сброс';
+          b.title = 'вернуть камеру к общему виду участка';
+          b.onclick = () => { stopTour(); home(); say(baseline()); draw(); };
           wrap.appendChild(b);
         }
         // прогулка: со входа через все помещения, глазами человека
@@ -542,55 +592,92 @@
       }
 
       // Пальцев бывает два: на телефоне колеса нет, и зум делается щипком.
-      // Все активные указатели держатся в карте; один — орбита, два — щипок
-      const drag = { on: false, x: 0, y: 0, moved: 0 };
+      // Все активные указатели держатся в карте; один — поворот или сдвиг,
+      // два — щипок и сдвиг разом (середина щипка тянет за собой модель)
+      const drag = { on: false, pan: false, x: 0, y: 0, moved: 0 };
       const touches = new Map();
       const pinchDist = () => {
         const [a, b] = [...touches.values()];
         return Math.hypot(a.x - b.x, a.y - b.y);
       };
-      let pinch0 = 0;
+      const pinchMid = () => {
+        const [a, b] = [...touches.values()];
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      };
+      let pinch0 = 0, pinchC = null;
+      canvas.addEventListener('contextmenu', e => e.preventDefault());
       canvas.addEventListener('pointerdown', e => {
         stopTour();                      // взялся за модель — прогулка кончилась
+        if (e.button === 1) e.preventDefault();   // средняя кнопка — не автопрокрутка
         touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        if (touches.size === 2) { pinch0 = pinchDist(); drag.on = false; }
-        else { drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0; }
+        if (touches.size === 2) { pinch0 = pinchDist(); pinchC = pinchMid(); drag.on = false; }
+        else {
+          drag.on = true; drag.x = e.clientX; drag.y = e.clientY; drag.moved = 0;
+          // правая и средняя кнопки, а также Shift — сдвиг вместо поворота
+          drag.pan = e.button === 1 || e.button === 2 || e.shiftKey;
+        }
         try { canvas.setPointerCapture(e.pointerId); } catch { /* синтетический указатель */ }
       });
       canvas.addEventListener('pointerup', e => {
         touches.delete(e.pointerId);
+        if (touches.size < 2) { pinch0 = 0; pinchC = null; }
         try { canvas.releasePointerCapture(e.pointerId); } catch { /* синтетический указатель */ }
-        if (drag.on && touches.size === 0 && drag.moved < 5) pick(e);
-        drag.on = false;
+        if (drag.on && !drag.pan && touches.size === 0 && drag.moved < 5) pick(e);
+        drag.on = false; drag.pan = false;
       });
-      canvas.addEventListener('pointercancel', e => { touches.delete(e.pointerId); drag.on = false; });
+      canvas.addEventListener('pointercancel', e => {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) { pinch0 = 0; pinchC = null; }
+        drag.on = false; drag.pan = false;
+      });
       canvas.addEventListener('pointermove', e => {
         if (!touches.has(e.pointerId)) return;
         touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (touches.size === 2) {
-          const d = pinchDist();
+          const d = pinchDist(), c = pinchMid();
           if (pinch0 > 0 && d > 0) {
-            dist = Math.max(span * 0.1, Math.min(span * 5, dist * pinch0 / d));
+            dist = clampDist(dist * pinch0 / d);
             pinch0 = d;
-            draw();
           }
+          if (pinchC) panBy(c.x - pinchC.x, c.y - pinchC.y);
+          pinchC = c;
+          draw();
           return;
         }
         if (!drag.on) return;
         drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
-        yaw -= (e.clientX - drag.x) * 0.008;
-        pitch = Math.max(-1.45, Math.min(1.45, pitch + (e.clientY - drag.y) * 0.008));
+        if (drag.pan) panBy(e.clientX - drag.x, e.clientY - drag.y);
+        else {
+          yaw -= (e.clientX - drag.x) * 0.008;
+          pitch = Math.max(-1.45, Math.min(1.45, pitch + (e.clientY - drag.y) * 0.008));
+        }
         drag.x = e.clientX; drag.y = e.clientY;
         draw();
       });
       canvas.addEventListener('wheel', e => {
         e.preventDefault();
         stopTour();
-        dist = Math.max(span * 0.1, Math.min(span * 5, dist * (1 + Math.sign(e.deltaY) * 0.12)));
+        dist = clampDist(dist * (1 + Math.sign(e.deltaY) * 0.12));
         draw();
       }, { passive: false });
-      canvas.addEventListener('dblclick', () => {
-        yaw = HOME.yaw; pitch = HOME.pitch; dist = span * 1.5; centre = [...centre0]; draw();
+      // Двойной клик по элементу переносит на него точку вращения: дальше
+      // поворот и зум идут вокруг него, а не вокруг середины участка —
+      // так обходят времянку, узел кровли или дверь. Мимо модели — сброс
+      canvas.addEventListener('dblclick', e => {
+        stopTour();
+        const id = pickId(e);
+        const q = id > 0 ? elBox.get(id) : null;
+        if (q) {
+          centre = q.mn.map((v, i) => (v + q.mx[i]) / 2);
+          dist = clampDist(Math.max(...q.mx.map((v, i) => v - q.mn[i])) * 2.4);
+          sel = id;
+          const i2 = info.get(id) || {};
+          const st = storeyName.get(storeyOf.get(id));
+          say([i2.name || i2.long || id, i2.tag, st, 'камера вокруг него'].filter(Boolean).join(' · '));
+        } else {
+          home(); sel = -1; say(baseline());
+        }
+        draw();
       });
 
       function scene(pickPass) {
@@ -645,7 +732,7 @@
 
       // выбор элемента: пиксель под курсором в проходе, где цвет — номер
       // сущности. Луч в коробочную геометрию не нужен: GPU уже всё посчитал
-      function pick(e) {
+      function pickId(e) {
         scene(true);
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const r = canvas.getBoundingClientRect();
@@ -660,7 +747,10 @@
           const v = b[i * 4] + b[i * 4 + 1] * 256 + b[i * 4 + 2] * 65536;
           if (v > 0 && info.has(v)) votes.set(v, (votes.get(v) || 0) + 1);
         }
-        const id = [...votes.entries()].sort((a, c) => c[1] - a[1])[0]?.[0] || 0;
+        return [...votes.entries()].sort((a, c) => c[1] - a[1])[0]?.[0] || 0;
+      }
+      function pick(e) {
+        const id = pickId(e);
         if (id > 0 && info.has(id)) {
           sel = id;
           const i = info.get(id);
