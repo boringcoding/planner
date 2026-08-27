@@ -900,8 +900,10 @@ export function ifc(house, systems = [], opt = {}) {
       // перекрытие пола блока и настил открытой террасы
       box('floor', 'IFCSLAB', 'Перекрытие пола времянки',
         { ...T.block, id: `${T.id}.floor` }, T.grillTop, T.floor - T.grillTop, '.FLOOR.', 'Дерево, каркас', 'wood');
+      // настил — не одна доска в воздухе: под доской лаги до ростверка,
+      // и без них между настилом и ростверком висит треть метра пустоты
       box('deck', 'IFCSLAB', 'Настил террасы времянки',
-        T.deck, T.deckTop - T.board, T.board, '.FLOOR.', 'Доска террасная', 'wood');
+        T.deck, T.grillTop, T.deckTop - T.grillTop, '.FLOOR.', 'Доска террасная по лагам', 'wood');
       for (const q of T.steps)
         box(q.id, 'IFCSLAB', 'Ступень крыльца времянки', q, q.top - 60, 60, '.LANDING.', 'Доска террасная', 'wood');
       for (const q of T.rails)

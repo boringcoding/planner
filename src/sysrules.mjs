@@ -332,6 +332,21 @@ export function checkSystems(house, data) {
         if (inZ < -2000)
           errs.push(`участок: ${f.id} приходит в септик на ${-inZ} — глубже 2000 стандартная станция не принимает`);
       }
+      // Ввод во времянку приходит в стену отапливаемого блока, а не в габарит.
+      // Южная треть габарита — открытая терраса на сваях: труба, посаженная
+      // на неё, выныривает под настилом и не входит никуда. На плане это
+      // выглядит ровно так же, как правильный ввод
+      if (PG.temp) {
+        const B = PG.temp.block;
+        for (const f of all.filter(x => x.target === 'temp' || x.exit)) {
+          const q = f.enter || f.exit;
+          if (!q) continue;
+          const horiz = q.side === 'S' || q.side === 'N';
+          const [lo, hi] = horiz ? [B.x, B.x + B.w] : [B.y, B.y + B.h];
+          if (q.at < lo || q.at > hi)
+            errs.push(`участок: ${f.id} входит во времянку на ${q.at} со стороны ${q.side}, а стена блока идёт ${lo}…${hi}`);
+        }
+      }
       // трассы не выходят за границы участка и не ныряют под здания
       const boxes = [{ name: 'домом', b: { x: 0, y: 0, w: S.w, h: S.h } }];
       if (PG.temp) boxes.push({ name: 'времянкой', b: PG.temp.box });
