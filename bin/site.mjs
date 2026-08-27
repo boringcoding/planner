@@ -239,17 +239,22 @@ const specSection = (() => {
         </tr>`).join('\n        ')}</tbody>
       </table>
       <table class="expl">
-        <caption>Гильзы и закладные в монолите — заложить до заливки</caption>
-        <thead><tr><th>Трасса</th><th>Здание</th><th>Стена</th><th>По стене</th><th>Ось</th><th>Гильза</th></tr></thead>
+        <caption>Гильзы и закладные для вводов — привязка по стене здания</caption>
+        <thead><tr><th>Трасса</th><th>Здание</th><th>Стена</th><th>По стене</th><th>Ось</th><th>Гильза</th><th>Куда</th></tr></thead>
         <tbody>${systems.flatMap(sys => feedsGeom(house, sys)).filter(f => !f.pressure).map(f => {
     const dn = f.kind === 'sewer' ? 'DN 200' : f.kind === 'water' ? 'DN 75' : 'DN 110';
-    const tmp = !!f.target;
-    const p = f.exit ? f.pts[0] : tmp ? f.pts[f.pts.length - 1] : f.pts[0];
-    const side = f.exit ? f.exit.side : tmp ? f.enter.side : f.side;
-    const at = f.exit ? f.exit.at : tmp ? f.enter.at : f.at;
+    const tmp = !!f.target || !!f.exit;
+    const p = f.exit ? f.pts[0] : f.target ? f.pts[f.pts.length - 1] : f.pts[0];
+    const side = f.exit ? f.exit.side : f.target ? f.enter.side : f.side;
+    // привязка времянки — от её собственного угла: мировая координата
+    // 23000 в таблице к монолитному цоколю дома отношения не имеет
+    const T = plotG && plotG.temp;
+    const raw = f.exit ? f.exit.at : f.target ? f.enter.at : f.at;
+    const at = tmp && T ? raw - (side === 'S' || side === 'N' ? T.x : T.y) : raw;
     return `<tr><td>${esc(f.id)} · ${f.kind === 'sewer' ? 'канализация' : f.kind === 'water' ? 'вода' : 'кабель'}</td>
-          <td>${tmp || f.exit ? 'времянка' : 'дом'}</td><td class="num">${side}</td>
-          <td class="num">${at}</td><td class="num">${(p.z / 1000).toFixed(2).replace('.', ',')}</td><td class="num">${dn}</td></tr>`;
+          <td>${tmp ? 'времянка' : 'дом'}</td><td class="num">${side}</td>
+          <td class="num">${at}</td><td class="num">${(p.z / 1000).toFixed(2).replace('.', ',')}</td><td class="num">${dn}</td>
+          <td>${tmp ? 'через забирку и брусовой ростверк' : 'в опалубку монолита до заливки'}</td></tr>`;
   }).join('\n        ')}</tbody>
       </table>
       <table class="expl">

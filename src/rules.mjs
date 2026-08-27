@@ -1356,7 +1356,27 @@ export function check(house, brief) {
     const T = tempGeom(house);
     if (T) {
       const E2 = m => errs.push(`времянка: ${m}`);
-      // 42а. помещения и перегородки покрывают внутренний габарит
+      // Идентификатор присваивается один раз и не повторяется — то же правило,
+      // что у дома. Времянка пришла отдельной ветвью данных и под правило 25
+      // не попадала: повтор id тихо ломает и выгрузку, и ведомость
+      {
+        const seen = new Set();
+        for (const el of [...T.parts, ...T.rooms, ...T.openings, ...T.doors]) {
+          if (!el.id) { E2('элемент без идентификатора'); continue; }
+          if (seen.has(el.id)) E2(`идентификатор ${el.id} повторяется`);
+          seen.add(el.id);
+        }
+      }
+      // 42а. помещения и перегородки покрывают внутренний габарит и лежат
+      // внутри него. Заливка ловит дыры и наложения, но помещение, вылезшее
+      // за наружную стену, она принимает за законную клетку вне габарита
+      for (const q of [...T.rooms, ...T.parts])
+        if (Math.abs(overlap(q, T.inner) - area(q)) > 1)
+          E2(`«${q.name || q.id}» выходит за внутренний габарит`);
+      for (let i = 0; i < T.parts.length; i++)
+        for (let j = i + 1; j < T.parts.length; j++)
+          if (overlap(T.parts[i], T.parts[j]) > 100)
+            E2(`перегородки ${T.parts[i].id} и ${T.parts[j].id} наложились`);
       const tile = tiling(T.inner, T.rooms, T.parts);
       for (const c of tile.free.slice(0, 3))
         E2(`пол ${c.w} × ${c.h} мм у ${c.x},${c.y} не принадлежит ни одному помещению`);
@@ -1372,7 +1392,9 @@ export function check(house, brief) {
         const w = T.walls.find(q => q.side === o.side);
         if (!w) { E2(`проём ${o.id} на стороне ${o.side}, а такой стены нет`); continue; }
         const horiz = o.side === 'S' || o.side === 'N';
-        const [lo, hi] = horiz ? [w.x, w.x + w.w] : [w.y, w.y + w.h];
+        // щипцовая стена задана во всю ширину, и её концы заняты карнизными:
+        // простенок там меряется от внутренней грани, а не от угла габарита
+        const [lo, hi] = horiz ? [w.x + T.t, w.x + w.w - T.t] : [w.y, w.y + w.h];
         if (o.a < lo + LIMITS.jambMin || o.b > hi - LIMITS.jambMin)
           E2(`проём ${o.id} ${o.a}…${o.b} не оставляет простенка ${LIMITS.jambMin} в стене ${lo}…${hi}`);
         // потолок над проёмом: у карнизной стены он ровный, у щипцовой
@@ -1381,6 +1403,22 @@ export function check(house, brief) {
         const lim = horiz ? Math.min(at(o.a), at(o.b)) : T.clear;
         if (o.hz + (o.sill || 0) > lim)
           E2(`проём ${o.id} верхом на ${o.hz + (o.sill || 0)}, а низ кровли над ним ${lim}`);
+      }
+      // два проёма в одной стене обязаны разойтись простенком: вплотную
+      // и внахлёст они на плане выглядят одинаково законно
+      for (let i = 0; i < T.openings.length; i++)
+        for (let j = i + 1; j < T.openings.length; j++) {
+          const [p, q] = [T.openings[i], T.openings[j]];
+          if (p.side !== q.side) continue;
+          const gap = Math.max(p.a, q.a) - Math.min(p.b, q.b);
+          if (gap < LIMITS.jambMin)
+            E2(`проёмы ${p.id} и ${q.id} на стороне ${p.side} разошлись на ${Math.round(gap)}, нужно ${LIMITS.jambMin}`);
+        }
+      // дверь, в которую не пройти телом 550, связывает помещения только
+      // на бумаге: граф достижимости её принимает, человек — нет
+      for (const d of [{ ...T.door, min: LIMITS.entranceW }, ...T.doors.map(q => ({ ...q, min: LIMITS.doorW }))]) {
+        if (d.b - d.a < d.min) E2(`дверь ${d.id} шириной ${d.b - d.a}, пройти можно от ${d.min}`);
+        if (d.hz < LIMITS.doorHzMin) E2(`дверь ${d.id} высотой ${d.hz}, пройти не пригибаясь можно от ${LIMITS.doorHzMin}`);
       }
       for (const d of T.doors) {
         const p = T.parts.find(q => q.id === d.part);
@@ -1402,8 +1440,14 @@ export function check(house, brief) {
       for (const d of T.doors)
         link(d.horiz ? rect(d.a, d.host.y - 150, d.b - d.a, d.host.h + 300)
           : rect(d.host.x - 150, d.a, d.host.w + 300, d.b - d.a), d.id);
-      const entry = T.rooms.findIndex(q => overlap(
-        rect(T.door.a, T.block.y - 150, T.door.b - T.door.a, T.t + 300), q) > 1000);
+      // полоса входа кладётся у стены СВОЕЙ стороны: для боковой двери
+      // a/b — это координаты по y, и полоса, построенная по южной стене,
+      // не пересекает ни одного помещения. Правило молчало бы всегда
+      const dw = T.walls.find(q => q.side === T.door.side);
+      const band = !dw ? null : (T.door.side === 'S' || T.door.side === 'N')
+        ? rect(T.door.a, dw.y - 150, T.door.b - T.door.a, dw.h + 300)
+        : rect(dw.x - 150, T.door.a, dw.w + 300, T.door.b - T.door.a);
+      const entry = band ? T.rooms.findIndex(q => overlap(band, q) > 1000) : -1;
       if (entry < 0) E2('входная дверь не ведёт ни в одно помещение');
       else {
         const seen = new Set([entry]), st = [entry];
@@ -1432,6 +1476,12 @@ export function check(house, brief) {
       }
       if (Math.abs(overlap(T.roof.box, T.deck) - T.deck.w * T.deck.h) > 1)
         E2('кровля не перекрывает настил террасы целиком — с неё будет лить на доски');
+      // уклон и свес — те же пределы, что у дома: ниже 14 фальц течёт,
+      // выше 45 парусит, свес меньше 400 не держит воду от стены
+      if (T.roof.pitch < LIMITS.roofPitch[0] || T.roof.pitch > LIMITS.roofPitch[1])
+        E2(`уклон кровли ${T.roof.pitch}°, норма ${LIMITS.roofPitch.join('…')}`);
+      if (T.roof.over < LIMITS.roofEave[0] || T.roof.over > LIMITS.roofEave[1])
+        E2(`свес кровли ${T.roof.over}, норма ${LIMITS.roofEave.join('…')}`);
 
       // 42е. свая ниже промерзания с коэффициентом на неотапливаемый грунт,
       // и продух под ростверком: дерево на земле сгниёт за одну зиму
@@ -1445,10 +1495,19 @@ export function check(house, brief) {
       // а при перепаде больше нормы кромка ограждается
       if (T.rise > LIMITS.porchRise[1] || T.rise < LIMITS.porchRise[0])
         E2(`подступёнок крыльца ${T.rise}, норма ${LIMITS.porchRise[0]}…${LIMITS.porchRise[1]}`);
+      if (T.steps.length && T.steps[0].h < LIMITS.treadMin)
+        E2(`проступь крыльца ${T.steps[0].h}, норма ${LIMITS.treadMin}`);
+      // от порога до настила — отбойник, а не ступень: прямо перед полотном
+      // единственного входа ступень уже была однажды, у веранды дома
+      const sill = T.floor - T.deckTop;
+      if (sill <= 0 || sill > LIMITS.deckStep)
+        E2(`от порога ${T.door.id} до настила ${sill} — это ступень, а не отбойник`);
+      // ограждение проверяется решением, а не наличием тел: тела считаются
+      // из того же решения, и правило по ним ловило бы само себя
+      if (T.drop > 600 && !(T.deck.rail >= LIMITS.guardRail))
+        E2(`настил на ${Math.round(T.drop)} над землёй, ограждение ${T.deck.rail || 'не задано'} при норме ${LIMITS.guardRail}`);
       if (T.drop > 600 && !T.rails.length)
-        E2(`настил на ${Math.round(T.drop)} над землёй без ограждения`);
-      for (const r of T.rails)
-        if (r.hz < LIMITS.guardRail) E2(`ограждение настила ${r.hz}, норма ${LIMITS.guardRail}`);
+        E2('ограждение настила задано, а тел у него нет');
     }
   }
 

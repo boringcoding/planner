@@ -187,6 +187,16 @@ export function ifc(house, systems = [], opt = {}) {
     return E('IFCEXTRUDEDAREASOLID', [prof, E('IFCAXIS2PLACEMENT3D', [P0, '$', '$']), DZ, num(dz)]);
   };
 
+  // тот же произвольный контур, но выдавленный не вверх, а вдоль заданной
+  // оси и внутри чужой посадки: так фронтон ложится в тело своей же стены,
+  // и вычитание проёма режет их обоих разом
+  const profSolid = (pts, len, pos, axis, ref) => {
+    const poly = E('IFCPOLYLINE', [L([...pts, pts[0]].map(p => E('IFCCARTESIANPOINT', [L([num(p[0]), num(p[1])])])))]);
+    const prof = E('IFCARBITRARYCLOSEDPROFILEDEF', ['.AREA.', '$', poly]);
+    return E('IFCEXTRUDEDAREASOLID', [prof,
+      E('IFCAXIS2PLACEMENT3D', [pt3(...pos), dir3(...axis), dir3(...ref)]), DZ, num(len)]);
+  };
+
   // ---- стили поверхностей ----------------------------------------------
   // ArchiCAD (и любой BIM) красит то, что записано в файле, а не то, что
   // рисует наша смотрелка. Без IfcStyledItem модель приезжает серой глыбой,
@@ -267,12 +277,14 @@ export function ifc(house, systems = [], opt = {}) {
   // z0 — отметка низа стены в осях этажа. Дому он всегда ноль, а времянка
   // стоит на сваях: её пол выше отметки этажа, и стена с нулём приезжает
   // в землю вместе со всеми своими проёмами
-  const wallOf = (storey, key, name, rect, hz, kind, z0 = 0) => {
+  const wallOf = (storey, key, name, rect, hz, kind, z0 = 0, mat = 'Кладка', extra = null) => {
     const horiz = rect.w >= rect.h;
     const len = horiz ? rect.w : rect.h, th = horiz ? rect.h : rect.w;
     const cx = rect.x + rect.w / 2, cy = Y(rect.y + rect.h / 2);
     const pl = place(storey.pl, cx, cy, z0, horiz ? [1, 0] : [0, 1]);
-    const body = E('IFCSHAPEREPRESENTATION', [sub, str('Body'), str('SweptSolid'), L([paint(boxSolid(len, th, hz), 'wall')])]);
+    const solids = [paint(boxSolid(len, th, hz), 'wall')];
+    if (extra) for (const q of extra({ len, th, hz })) solids.push(q);
+    const body = E('IFCSHAPEREPRESENTATION', [sub, str('Body'), str('SweptSolid'), L(solids)]);
     const axis = E('IFCSHAPEREPRESENTATION', [subAxis, str('Axis'), str('Curve2D'), L([
       E('IFCPOLYLINE', [L([
         E('IFCCARTESIANPOINT', [L([num(-len / 2), '0.'])]),
@@ -286,7 +298,7 @@ export function ifc(house, systems = [], opt = {}) {
     const w = E('IFCWALL', [G(`wall:${key}`), owner, str(name), '$', '$', pl, shape, str(key),
       kind === 'bearing' ? '.SOLIDWALL.' : '.PARTITIONING.']);
     put(storey.st, w);
-    matOf('Кладка', w);
+    matOf(mat, w);
     return { el: w, pl, len, th, horiz, rect, cx, cy, dir: horiz ? [1, 0] : [0, 1] };
   };
 
@@ -925,34 +937,36 @@ export function ifc(house, systems = [], opt = {}) {
       // оставила бы щель до кровли на всю длину — ту самую, из-за которой
       // у дома появился фризовый пояс
       const tws = [];
-      for (const wl of T.walls) {
-        const w = wallOf(tempStorey, wl.id, 'Стена времянки', wl, T.clear, 'bearing', T.floor - tb);
-        w.side = wl.side;
-        tws.push(w);
-        addProps(w.el, `wall:${wl.id}`, [['id', wl.id], ['kind', 'shell'], ['mat', T.mat]]);
-      }
-      const tps = [];
-      for (const q of T.parts) {
-        const w = wallOf(tempStorey, q.id, 'Перегородка времянки', q, q.hz, 'part', T.floor - tb);
-        tps.push(w);
-        addProps(w.el, `wall:${q.id}`, [['id', q.id], ['kind', 'part']]);
-        // над поперечной перегородкой остаётся клин до низа ската: без него
-        // щель на всю длину дома, видимая только в 3D
-        if (!q.wedge) continue;
+      // клин над стеной или перегородкой: профиль по низу ската, выдавленный
+      // поперёк — тем же кодом для продольных и поперечных
+      const capWedge = q => {
         const pl = placeAx(tempStorey.pl, [q.x, Y(q.y), T.floor + q.hz - tb], [0, -1, 0], [1, 0, 0]);
-        const el = E('IFCWALL', [G(`temp:${q.id}.up`), owner, str('Перегородка времянки, клин'), '$', '$', pl,
+        const el = E('IFCWALL', [G(`temp:${q.id}.up`), owner, str('Клин под скатом'), '$', '$', pl,
           bodyOf([paint(polySolid(q.wedge, q.h), 'wall')]), str(`${q.id}.up`), '.PARTITIONING.']);
         put(tempStorey.st, el);
         matOf('Дерево, каркас', el);
+      };
+      for (const wl of T.walls) {
+        // фронтон живёт в теле щипцовой стены, а не рядом с ней: иначе проём
+        // режет только нижнюю коробку, и верх витража остаётся в глухом
+        const extra = wl.gable
+          ? ({ len, th, hz }) => [paint(profSolid(wl.gable, th, [-len / 2, th / 2, hz], [0, -1, 0], [1, 0, 0]), 'wall')]
+          : null;
+        const w = wallOf(tempStorey, wl.id, 'Стена времянки', wl, wl.hz, 'bearing',
+          T.floor - tb, 'Дерево, каркас', extra);
+        w.side = wl.side;
+        tws.push(w);
+        addProps(w.el, `wall:${wl.id}`, [['id', wl.id], ['kind', 'shell'], ['mat', T.mat],
+        ...(wl.gable ? [['gable', (T.gableArea / 2).toFixed(2)]] : [])]);
+        if (wl.wedge) capWedge(wl);
       }
-      // фронтоны: торцы между верхом карнизных стен и низом ската
-      for (const g of T.gables) {
-        const pl = placeAx(tempStorey.pl, [T.x, Y(g.y), g.z - tb], [0, -1, 0], [1, 0, 0]);
-        const el = E('IFCWALL', [G(`temp:${g.id}`), owner, str(`Фронтон времянки ${g.side}`), '$', '$', pl,
-          bodyOf([paint(polySolid(g.prof, g.th), 'wall')]), str(g.id), '.SOLIDWALL.']);
-        put(tempStorey.st, el);
-        matOf('Дерево, каркас', el);
-        addProps(el, `gable:${g.id}`, [['id', g.id], ['area', (T.gableArea / 2).toFixed(2)]]);
+      const tps = [];
+      for (const q of T.parts) {
+        const w = wallOf(tempStorey, q.id, 'Перегородка времянки', q, q.hz, 'part',
+          T.floor - tb, 'Дерево, каркас');
+        tps.push(w);
+        addProps(w.el, `wall:${q.id}`, [['id', q.id], ['kind', 'part']]);
+        if (q.wedge) capWedge(q);
       }
       // скаты: призма сечением поперёк конька, выдавленная вдоль него
       for (const s of T.roof.slopes) {
@@ -962,6 +976,21 @@ export function ifc(house, systems = [], opt = {}) {
         put(tempStorey.st, el);
         matOf(T.roof.mat, el);
         addProps(el, `slope:${s.id}`, [['id', s.id], ['pitch', T.roof.pitch], ['ridge', Math.round(T.roof.ridgeZ)]]);
+      }
+
+      // Помещения времянки. Без них список «изолировать помещение» в смотрелке
+      // знает только дом, и пять комнат, которые есть в данных и в смете,
+      // на экране не существуют. Высота — до самой низкой точки под скатом
+      for (const r of T.rooms) {
+        const pl = place(tempStorey.pl, r.x + r.w / 2, Y(r.y + r.h / 2), T.floor - tb);
+        const hz = Math.round(Math.min(T.roof.underAt(r.x - T.x), T.roof.underAt(r.x + r.w - T.x)) - T.floor);
+        // имя короткое, длинное — с пометкой: в списке помещений смотрелки
+        // «Прихожая · первый этаж» дома и времянки иначе не различить
+        const sp = E('IFCSPACE', [G(`space:${r.id}`), owner, str(r.id.replace('plot.', '')), '$', '$', pl,
+          bodyOf([boxSolid(r.w, r.h, hz)]), str(`${r.name} · времянка`), '.ELEMENT.', '.INTERNAL.', num(T.floor)]);
+        rels.push(E('IFCRELAGGREGATES', [G(`agg:${r.id}`), owner, '$', '$', tempStorey.st, L([sp])]));
+        addProps(sp, `space:${r.id}`, [['id', r.id], ['name', r.name],
+        ['area', r.area.toFixed(2)], ['use', r.use || ''], ['clear', hz]]);
       }
 
       // ---- проёмы времянки -------------------------------------------------
@@ -987,7 +1016,9 @@ export function ifc(house, systems = [], opt = {}) {
         if (!host) continue;
         const width = d.b - d.a, c = (d.a + d.b) / 2;
         const op = openingIn(host, d.id, d.horiz ? c : d.at, Y(d.horiz ? d.at : c), width, 0, d.hz);
-        fill(tempStorey, op, d.id, 'door', 'Дверь времянки', width, d.hz, host.th - 60);
+        const el = fill(tempStorey, op, d.id, 'door', 'Дверь времянки', width, d.hz, host.th - 60);
+        addStd(el, `door:${d.id}`, 'Pset_DoorCommon', [
+          ['Reference', `IFCIDENTIFIER(${str(d.id)})`], ['IsExternal', 'IFCBOOLEAN(.F.)']]);
         addProps(op.op, `op:${d.id}`, [['id', d.id], ['kind', 'door'], ['part', d.part]]);
       }
     }

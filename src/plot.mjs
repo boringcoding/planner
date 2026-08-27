@@ -82,7 +82,7 @@ export function plotGeom(house) {
       paths.push({ id: 'plot.walk2', x: stepX1 + walkW, y: by0, w: bx + 800 - (stepX1 + walkW), h: 800, top: ground, th: walkTh });
       paths.push({ id: 'plot.walk3', x: bx, y: by0 + 800, w: 800, h: backY + 800 - (by0 + 800), top: ground, th: walkTh });
       paths.push({ id: 'plot.walk4', x: cx - 400, y: backY, w: bx - (cx - 400), h: 800, top: ground, th: walkTh });
-      paths.push({ id: 'plot.walk5', x: cx - 400, y: backY + 800, w: 800, h: stepsY - 300 - (backY + 800), top: ground, th: walkTh });
+      paths.push({ id: 'plot.walk5', x: cx - 400, y: backY + 800, w: 800, h: stepsY + 300 - (backY + 800), top: ground, th: walkTh });
     }
   }
 

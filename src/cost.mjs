@@ -195,8 +195,13 @@ export function quantities(house, systems) {
         - openArea + T.gableArea;
       q.tempRoofArea = T.roof.area;
       q.tempDeck = T.deckArea;
-      q.tempRail = T.rails.reduce((s, r) => s + mm(Math.max(r.w, r.h)), 0)
-        + mm(T.screenLen) + mm(T.skirtLen);
+      // ограждение, экраны и забирка — три разные работы и три цены;
+      // одной строкой забирка съедала три четверти «ограждения веранды»
+      q.tempRail = T.rails.reduce((s, r) => s + mm(Math.max(r.w, r.h)), 0) + mm(T.screenLen);
+      q.tempSkirt = mm(T.skirtLen);
+      // брус ростверка и стоек в смету не попадал вовсе
+      const vol = a => a.reduce((s, r) => s + mm(r.w) * mm(r.h) * mm(r.z1 - r.z0), 0);
+      q.tempTimber = vol(T.grill) + vol(T.posts);
       q.tempWin = T.windows.reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
       q.tempDoors = T.doors.length;
       q.tempSteps = m2(T.steps.reduce((s, r) => s + r.w * r.h, 0));
@@ -391,6 +396,7 @@ export function estimate(house, systems, prices) {
     ['tempPile', q.tempPile], ['tempFrame', q.tempFrame], ['tempSkin', q.tempSkin],
     ['roofing', q.tempRoofArea], ['workRoof', q.tempRoofArea],
     ['tempDeck', (q.tempDeck || 0) + (q.tempSteps || 0)], ['verandaRail', q.tempRail],
+    ['tempSkirt', q.tempSkirt], ['timber', q.tempTimber],
     ['window', q.tempWin], ['workWindow', q.tempWin],
     ['doorEntry', q.tempFoot ? 1 : 0], ['doorInner', q.tempDoors],
     ['floorWood', q.tempRooms], ['paint', q.tempSkin]

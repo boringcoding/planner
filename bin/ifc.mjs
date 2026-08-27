@@ -51,8 +51,11 @@ const roofOn = house.roof ? 1 : 0;
 // клинья над поперечными и два своих фронтона
 const PG = plotGeom(house);
 const TG = PG && PG.temp;
+// стены и перегородки плюс клин над каждой, у которой он есть; фронтон
+// отдельным телом не выпускается — он лежит в теле своей щипцовой стены
 const tempWalls = TG
-  ? TG.walls.length + TG.parts.length + TG.parts.filter(q => q.wedge).length + TG.gables.length : 0;
+  ? TG.walls.length + TG.parts.length
+  + [...TG.walls, ...TG.parts].filter(q => q.wedge).length : 0;
 const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length
   + 3 * pits.length + roofOn * 4
   + (PG ? PG.fence.segs.length + tempWalls : 0);
@@ -108,7 +111,7 @@ for (const sys of systems)
 
 const wells = systems.flatMap(sys => feedsGeom(house, sys)).flatMap(f => f.wells || []);
 const want = [
-  ['IFCSPACE', rooms], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
+  ['IFCSPACE', rooms + (TG ? TG.rooms.length : 0)], ['IFCWALL', walls], ['IFCOPENINGELEMENT', opens + holes + vents + rholes],
   ['IFCFURNISHINGELEMENT', furn],
   ['IFCBUILDINGSTOREY', house.levels.length],
   ['IFCBUILDING', 1],
