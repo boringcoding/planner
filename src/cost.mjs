@@ -181,16 +181,26 @@ export function quantities(house, systems) {
     q.paveWalk = PG.paths.reduce((s, p) => s + m2(p.w * p.h), 0);
     q.septicAU = PG.septic ? 1 : 0;
     q.wells = systems.flatMap(sys => feedsGeom(house, sys)).reduce((s, f) => s + (f.wells || []).length, 0);
+    // Времянка перестала быть блочной коробкой: считается каркасный дом
+    // на сваях со скатной кровлей и террасой. Объёмы берутся из той же
+    // геометрии, что уходит в выгрузку, — разойтись им негде
     if (PG.temp) {
       const T = PG.temp;
-      q.tempFoot = m2(T.w * T.h);
-      q.tempSand = q.tempFoot * 0.3;
-      q.tempSlab = q.tempFoot * mm(T.slabTh);
-      q.tempBlock = 2 * (mm(T.w) + mm(T.h)) * mm(T.clear ?? 2700) * mm(T.t)
-        - [T.door, ...(T.windows || [])].reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0) * mm(T.t);
-      q.tempRoof = q.tempFoot;
-      q.tempWin = (T.windows || []).reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
-      q.tempPorch = m2(T.porch.w * T.porch.h);
+      const openArea = T.openings.reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
+      q.tempPile = T.piles.length;
+      q.tempFoot = m2(T.block.w * T.block.h);          // пятно отапливаемого блока
+      q.tempFrame = q.tempFoot;
+      // обшивка по наружным стенам за вычетом проёмов и по фронтонам
+      q.tempSkin = 2 * (mm(T.block.w) + mm(T.block.h)) * mm(T.clear)
+        - openArea + T.gableArea;
+      q.tempRoofArea = T.roof.area;
+      q.tempDeck = T.deckArea;
+      q.tempRail = T.rails.reduce((s, r) => s + mm(Math.max(r.w, r.h)), 0)
+        + mm(T.screenLen) + mm(T.skirtLen);
+      q.tempWin = T.windows.reduce((s, w) => s + mm(w.b - w.a) * mm(w.hz), 0);
+      q.tempDoors = T.doors.length;
+      q.tempSteps = m2(T.steps.reduce((s, r) => s + r.w * r.h, 0));
+      q.tempRooms = T.area;
     }
   }
 
@@ -247,7 +257,8 @@ export function openingSchedule(house) {
   const T = plotGeom(house)?.temp;
   if (T) {
     put('ДН', T.door.b - T.door.a, T.door.hz, 0, 'времянка', T.door.id);
-    for (const w of T.windows || []) put('ОК', w.b - w.a, w.hz, w.sill || 0, 'времянка', w.id);
+    for (const w of T.windows || []) put('ОК', w.b - w.a, w.hz, w.sill || 0, w.pano ? 'времянка, панорамное' : 'времянка', w.id);
+    for (const d of T.doors || []) put('ДВ', d.b - d.a, d.hz, null, 'времянка', d.id);
   }
   const order = ['ОК', 'ДН', 'ДВ', 'В', 'Л'];
   const list = [...rows.values()].sort((a, b) =>
@@ -287,11 +298,8 @@ export function lintelSchedule(house) {
     for (const o of L.windows || []) put(S.wall, o.b - o.a, o.id);
     for (const o of L.openings || []) put(o.t, o.w, o.id);
   }
-  const T = plotGeom(house)?.temp;
-  if (T) {
-    put(T.t, T.door.b - T.door.a, T.door.id);
-    for (const w of T.windows || []) put(T.t, w.b - w.a, w.id);
-  }
+  // Времянка перемычек не получает: каркасный дом несёт проём хедером
+  // из того же бруса, что и стойки, и это позиция каркаса, а не КЖ
   const list = [...rows.values()].sort((a, b) => b.th - a.th || b.span - a.span);
   list.forEach((r, i) => { r.mark = r.mono ? `Пм-${i + 1}` : `Пр-${i + 1}`; });
   return { list, cokol };
@@ -378,13 +386,14 @@ export function estimate(house, systems, prices) {
 
   add('Участок и времянка', [
     ['fence', q.fence], ['gateDrive', q.gateDrive], ['wicket', q.wicket],
-    ['paveDrive', q.paveDrive], ['paveWalk', q.paveWalk + (q.tempPorch || 0)],
+    ['paveDrive', q.paveDrive], ['paveWalk', q.paveWalk],
     ['septicAU', q.septicAU], ['well', q.wells],
-    ['sandbed', q.tempSand], ['concrete', q.tempSlab], ['workSlab', q.tempSlab],
-    ['rebar', (q.tempSlab || 0) * 0.1],
-    ['block', q.tempBlock], ['workBlock', q.tempBlock],
-    ['tempRoof', q.tempRoof],
-    ['window', q.tempWin], ['workWindow', q.tempWin], ['doorEntry', q.tempFoot ? 1 : 0]
+    ['tempPile', q.tempPile], ['tempFrame', q.tempFrame], ['tempSkin', q.tempSkin],
+    ['roofing', q.tempRoofArea], ['workRoof', q.tempRoofArea],
+    ['tempDeck', (q.tempDeck || 0) + (q.tempSteps || 0)], ['verandaRail', q.tempRail],
+    ['window', q.tempWin], ['workWindow', q.tempWin],
+    ['doorEntry', q.tempFoot ? 1 : 0], ['doorInner', q.tempDoors],
+    ['floorWood', q.tempRooms], ['paint', q.tempSkin]
   ]);
 
   add('Отделка', [

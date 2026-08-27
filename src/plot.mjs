@@ -13,6 +13,7 @@
 // от (-setback, -red) до (front - setback, depth - red).
 
 import { verandaGeom, plotMargins } from './roof.mjs';
+import { tempGeom } from './temp.mjs';
 
 export function plotGeom(house) {
   const P = house.project && house.project.plot;
@@ -59,7 +60,8 @@ export function plotGeom(house) {
   const V = verandaGeom(house);
   const walkW = (P.walk && P.walk.w) || 1000, walkTh = (P.walk && P.walk.th) || 100;
   const paths = [];
-  const T = P.temp;
+  const temp = tempGeom(house);
+  const T = temp;
   if (V && wicket) {
     // ступени веранды: дорожка встаёт вплотную к их восточной кромке
     const stepX1 = V.v.x + V.stepW;                       // восточный край ступеней
@@ -72,41 +74,16 @@ export function plotGeom(house) {
       const bx = cb.x + cb.w + 100;                        // восточный обход навеса
       const by0 = stepY0 - 1600;                           // связка от дорожки A
       const backY = S.h + (((house.site.apron || {}).out) ?? 1000) + 100;
-      const cx = (T.door.a + T.door.b) / 2;
+      // дорожка приходит не к стене, а к нижней ступени крыльца: между
+      // настилом и землёй почти метр, и сходят с него только по ступеням
+      const st = T.steps[0];
+      const cx = st ? st.x + st.w / 2 : (T.door.a + T.door.b) / 2;
+      const stepsY = T.y - T.stepOut;
       paths.push({ id: 'plot.walk2', x: stepX1 + walkW, y: by0, w: bx + 800 - (stepX1 + walkW), h: 800, top: ground, th: walkTh });
       paths.push({ id: 'plot.walk3', x: bx, y: by0 + 800, w: 800, h: backY + 800 - (by0 + 800), top: ground, th: walkTh });
       paths.push({ id: 'plot.walk4', x: cx - 400, y: backY, w: bx - (cx - 400), h: 800, top: ground, th: walkTh });
-      paths.push({ id: 'plot.walk5', x: cx - 400, y: backY + 800, w: 800, h: T.y - 600 - (backY + 800), top: ground, th: walkTh });
+      paths.push({ id: 'plot.walk5', x: cx - 400, y: backY + 800, w: 800, h: stepsY - 300 - (backY + 800), top: ground, th: walkTh });
     }
-  }
-
-  // ---- времянка -----------------------------------------------------------
-  // Коробка 8 × 8 в дальнем от улицы юго-восточном углу: в ней живут, пока
-  // строится дом, потом она — гостевая и мастерская. Материал — блок (C0):
-  // при разрыве до дома 6,5 м деревянной ей быть нельзя, и правило это держит
-  let temp = null;
-  if (T) {
-    const t = T.wall ?? 300;
-    const walls = [
-      { id: `${T.id}.wS`, x: T.x, y: T.y, w: T.w, h: t },
-      { id: `${T.id}.wN`, x: T.x, y: T.y + T.h - t, w: T.w, h: t },
-      { id: `${T.id}.wW`, x: T.x, y: T.y + t, w: t, h: T.h - 2 * t },
-      { id: `${T.id}.wE`, x: T.x + T.w - t, y: T.y + t, w: t, h: T.h - 2 * t }
-    ];
-    // крыльцо-плита перед дверью: порог на 0.000, земля на ground —
-    // без промежуточной ступени перепад был бы больше порога
-    const porch = {
-      id: `${T.id}.porch`, x: T.door.a - 150, y: T.y - 600, w: T.door.b - T.door.a + 300, h: 600,
-      top: Math.round(ground / 2), th: 150
-    };
-    temp = {
-      ...T, t, walls, porch,
-      box: { x: T.x, y: T.y, w: T.w, h: T.h },
-      slabTh: T.slab ?? 300, roofTh: T.roofTh ?? 220,
-      roofZ: T.clear ?? 2700,                              // низ кровельной плиты
-      top: (T.clear ?? 2700) + (T.roofTh ?? 220),
-      area: T.w * T.h / 1e6
-    };
   }
 
   // ---- септик -------------------------------------------------------------

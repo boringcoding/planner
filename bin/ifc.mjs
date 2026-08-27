@@ -46,13 +46,17 @@ const pits = pitGeom(house);
 const V = verandaGeom(house);
 const roofOn = house.roof ? 1 : 0;
 // стены: перегородки и несущие из данных, четыре наружных на уровень,
-// три стенки приямка, два фронтона и два фризовых пояса, панели забора
-// и четыре стены времянки
+// три стенки приямка, два фронтона и два фризовых пояса, панели забора.
+// Времянка теперь даёт не четыре стены, а четыре наружных, перегородки,
+// клинья над поперечными и два своих фронтона
 const PG = plotGeom(house);
+const TG = PG && PG.temp;
+const tempWalls = TG
+  ? TG.walls.length + TG.parts.length + TG.parts.filter(q => q.wedge).length + TG.gables.length : 0;
 const walls = house.levels.reduce((s, L) => s + L.walls.length, 0) + 4 * house.levels.length
   + 3 * pits.length + roofOn * 4
-  + (PG ? PG.fence.segs.length + (PG.temp ? PG.temp.walls.length : 0) : 0);
-const tempOpens = PG && PG.temp ? 1 + (PG.temp.windows || []).length : 0;
+  + (PG ? PG.fence.segs.length + tempWalls : 0);
+const tempOpens = TG ? 1 + TG.windows.length + TG.doors.length : 0;
 const opens = house.levels.reduce((s, L) => s + (L.openings || []).length + (L.windows || []).length, 0)
   + tempOpens;
 const furn = house.levels.reduce((s, L) => s + (L.furniture || []).filter(f => f.hz).length, 0);
@@ -75,8 +79,9 @@ const F = house.foundation || {};
 const slabs = house.levels.length + 1 + (F.lean ? 1 : 0) + (F.sand ? 1 : 0)
   + (V ? 2 : 0) + roofOn * 2
   + 2 * pits.length + porches.length + apron.length + ramps.length
-  // покрытия участка и времянка: пол, кровля, крыльцо
-  + (PG ? 1 + PG.paths.length + (PG.temp ? 3 : 0) : 0);
+  // покрытия участка и времянка: перекрытие пола, настил террасы,
+  // ступени крыльца и два ската
+  + (PG ? 1 + PG.paths.length + (TG ? 2 + TG.steps.length + TG.roof.slopes.length : 0) : 0);
 const flues = house.levels[house.levels.length - 1].flues || [];
 
 // трассы: сегментный элемент на каждый прогон с геометрией и на каждую
@@ -110,21 +115,23 @@ const want = [
   ['IFCSYSTEM', systems.length],
   ['IFCROOF', roofOn], ['IFCSLAB', slabs],
   ['IFCCHIMNEY', roofOn * flues.length],
-  ['IFCPILE', V ? V.piles.length : 0], ['IFCCOLUMN', V ? V.posts.length : 0],
+  ['IFCPILE', (V ? V.piles.length : 0) + (TG ? TG.piles.length : 0)],
+  ['IFCCOLUMN', (V ? V.posts.length : 0) + (TG ? TG.posts.length : 0)],
   // балки: обвязка веранды, два мауэрлата, затяжка на каждую ферму,
-  // два снегозадержателя
+  // два снегозадержателя, ростверк времянки
   ['IFCBEAM', (V ? 2 : 0) + roofOn * (2 + roofGeom(house).trusses)
-    + roofOn * (house.roof.snowGuard ? 2 : 0)],
+    + roofOn * (house.roof.snowGuard ? 2 : 0) + (TG ? TG.grill.length : 0)],
   // пластины: крышки приямков, чердачные люки, створки ворот и калитки
   ['IFCPLATE', pits.length + house.levels.filter(L => L.atticHatch).length
-    + (PG ? [PG.fence.gate, PG.fence.wicket].filter(Boolean).length : 0)],
+    + (PG ? [PG.fence.gate, PG.fence.wicket].filter(Boolean).length : 0)
+    + (TG ? TG.skirt.length : 0)],
   ['IFCTANK', PG && PG.septic ? 1 : 0],
   ['IFCDISTRIBUTIONCHAMBERELEMENT', wells.length],
   ['IFCSTAIRFLIGHT', porches.length + (V && V.deckSteps.length ? 1 : 0)],
   // ограждения: марши с решением rail и настил веранды
   ['IFCRAILING', house.levels.reduce((s, L, i) => s
     + (L.stair && L.stair.rail && house.levels[i + 1] ? 1 : 0), 0)
-    + (V && V.railSegs.length ? 1 : 0)],
+    + (V && V.railSegs.length ? 1 : 0) + (TG ? TG.rails.length + TG.screens.length : 0)],
   ['IFCGEOGRAPHICELEMENT', groundGeom(house).length],
   ['IFCPIPESEGMENT', nSeg.IFCPIPESEGMENT],
   ['IFCDUCTSEGMENT', nSeg.IFCDUCTSEGMENT],
@@ -208,14 +215,20 @@ for (const L of house.levels) {
     w.side === 'S' ? S.h - t / 2 : w.side === 'N' ? t / 2 : S.h - c]);
   }
 }
-// проёмы времянки: та же сверка места — второе здание не прикрытие
-if (PG && PG.temp) {
-  const T = PG.temp, tw = T.t;
-  for (const w of [T.door, ...(T.windows || [])]) {
+// Проёмы времянки: та же сверка места — второе здание не прикрытие.
+// Стороны считаются от отапливаемого блока, а не от габарита: южная стена
+// блока смотрит на террасу, и разница ровно в её глубину
+if (TG) {
+  const T = TG, tw = T.t, B = T.block;
+  for (const w of T.openings) {
     const c = (w.a + w.b) / 2;
     expect.set(w.id, [
-      w.side === 'W' ? T.x + tw / 2 : w.side === 'E' ? T.x + T.w - tw / 2 : c,
-      w.side === 'S' ? S.h - (T.y + tw / 2) : w.side === 'N' ? S.h - (T.y + T.h - tw / 2) : S.h - c]);
+      w.side === 'W' ? B.x + tw / 2 : w.side === 'E' ? B.x + B.w - tw / 2 : c,
+      w.side === 'S' ? S.h - (B.y + tw / 2) : w.side === 'N' ? S.h - (B.y + B.h - tw / 2) : S.h - c]);
+  }
+  for (const d of T.doors) {
+    const c = (d.a + d.b) / 2;
+    expect.set(d.id, d.horiz ? [c, S.h - d.at] : [d.at, S.h - c]);
   }
 }
 // дырки в перекрытиях ждём там же, где шахта или лестница

@@ -190,7 +190,8 @@
       }
       // забор, ворота и покрытия — в слой участка, к грунту; времянка
       // целиком — в свой слой: оба различаются меткой, а не типом
-      for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW'])
+      for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW',
+        'IFCBEAM', 'IFCCOLUMN', 'IFCPILE', 'IFCRAILING'])
         for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
           const t = api.GetLine(model, e).Tag;
           if (!t) continue;

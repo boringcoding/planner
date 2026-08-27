@@ -100,7 +100,8 @@ for (const e of ids(api.GetLineIDsWithType(model, WebIFC.IFCRAILING))) {
 }
 // забор, ворота и покрытия — слой участка, как грунт; времянка целиком —
 // свой слой: оба различаются меткой, а не типом, парой со смотрелкой
-for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW'])
+for (const cls of ['IFCWALL', 'IFCSLAB', 'IFCPLATE', 'IFCDOOR', 'IFCWINDOW',
+  'IFCBEAM', 'IFCCOLUMN', 'IFCPILE', 'IFCRAILING'])
   for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
     const t = api.GetLine(model, e).Tag;
     if (!t) continue;
@@ -269,26 +270,70 @@ if (house.roof) {
       if (Math.abs(st.mx[2] - fenceTop) > 50)
         errs.push(`верх слоя «Участок» ${Math.round(st.mx[2])}, верх забора ${fenceTop}`);
     }
+    // Времянка перестала быть коробкой, и «габарит слоя» о ней больше ничего
+    // не говорит: у неё свес 500 по кругу, и общий габарит шире стен ровно
+    // на него. Поэтому меряется по частям — стены отдельно, скаты отдельно,
+    // и каждая часть отвечает на свой вопрос
     if (PG.temp) {
-      const tempEls = new Set();
-      for (const cls of ['IFCWALL', 'IFCSLAB'])
-        for (const e of ids(api.GetLineIDsWithType(model, WebIFC[cls]))) {
-          const t = api.GetLine(model, e).Tag;
-          if (t && /^plot\.temp/.test(String(t.value))) tempEls.add(e);
-        }
-      if (!tempEls.size) errs.push('времянки в модели нет вовсе');
-      else {
-        const tb = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12] };
-        for (const [e, b] of elBox) if (tempEls.has(e))
+      const T = PG.temp;
+      const tag = e => { const t = api.GetLine(model, e).Tag; return t ? String(t.value) : ''; };
+      const pick = re => {
+        const b = { mn: [1e12, 1e12, 1e12], mx: [-1e12, -1e12, -1e12], n: 0 };
+        for (const [e, q] of elBox) {
+          if (!re.test(tag(e))) continue;
+          b.n++;
           for (let a = 0; a < 3; a++) {
-            if (b.mn[a] < tb.mn[a]) tb.mn[a] = b.mn[a];
-            if (b.mx[a] > tb.mx[a]) tb.mx[a] = b.mx[a];
+            if (q.mn[a] < b.mn[a]) b.mn[a] = q.mn[a];
+            if (q.mx[a] > b.mx[a]) b.mx[a] = q.mx[a];
           }
-        const T = PG.temp;
-        if (Math.abs(tb.mn[0] - T.x) > 5 || Math.abs(tb.mx[0] - (T.x + T.w)) > 5)
-          errs.push(`времянка стоит в ${Math.round(tb.mn[0])}…${Math.round(tb.mx[0])} по x, по генплану ${T.x}…${T.x + T.w}`);
-        if (Math.abs(tb.mx[2] - T.top) > 5)
-          errs.push(`верх времянки ${Math.round(tb.mx[2])}, по генплану ${T.top}`);
+        }
+        return b;
+      };
+      // движок отдаёт план по y отражённым, как вся выгрузка: обратно в план
+      const py0 = b => S.h - b.mx[1], py1 = b => S.h - b.mn[1];
+      const all = pick(/^plot\.temp/);
+      if (!all.n) errs.push('времянки в модели нет вовсе');
+      else {
+        const near = (a, b, d = 5) => Math.abs(a - b) <= d;
+        // стены блока стоят ровно в пятне генплана
+        const w = pick(/^plot\.temp\.w[SNWE]$/);
+        if (!w.n) errs.push('наружных стен времянки в модели нет');
+        else if (!near(w.mn[0], T.block.x) || !near(w.mx[0], T.block.x + T.block.w)
+          || !near(py0(w), T.block.y) || !near(py1(w), T.block.y + T.block.h))
+          errs.push(`блок времянки стоит в ${Math.round(w.mn[0])}…${Math.round(w.mx[0])} × ${Math.round(py0(w))}…${Math.round(py1(w))}, по генплану ${T.block.x}…${T.block.x + T.block.w} × ${T.block.y}…${T.block.y + T.block.h}`);
+        else if (!near(w.mx[2], T.wallTop)) errs.push(`верх карнизных стен времянки ${Math.round(w.mx[2])}, по расчёту ${Math.round(T.wallTop)}`);
+        // скаты: свес по кругу и конёк на своей отметке
+        const r = pick(/^plot\.temp\.slope/);
+        if (r.n !== 2) errs.push(`скатов кровли времянки в модели ${r.n}, а не 2`);
+        else {
+          if (!near(r.mx[2], T.top)) errs.push(`конёк времянки ${Math.round(r.mx[2])}, по расчёту ${Math.round(T.top)}`);
+          if (!near(r.mn[2], T.roof.eaveZ - T.roof.pack))
+            errs.push(`низ карниза времянки ${Math.round(r.mn[2])}, по расчёту ${Math.round(T.roof.eaveZ - T.roof.pack)}`);
+          for (const [name, got, want] of [
+            ['западу', T.box.x - r.mn[0], T.roof.over], ['востоку', r.mx[0] - (T.box.x + T.box.w), T.roof.over],
+            ['югу', T.box.y - py0(r), T.roof.over], ['северу', py1(r) - (T.box.y + T.box.h), T.roof.over]])
+            if (!near(got, want)) errs.push(`свес кровли времянки по ${name} ${Math.round(got)}, по данным ${want}`);
+        }
+        // фронтон обязан дойти до низа конька: щели на торце по габариту
+        // всей времянки не видно — её закрывают скаты
+        const gb = pick(/^plot\.temp\.gable/);
+        if (gb.n !== 2) errs.push(`фронтонов времянки в модели ${gb.n}, а не 2`);
+        else if (!near(gb.mx[2], T.top - T.roof.pack, 6))
+          errs.push(`верх фронтонов времянки ${Math.round(gb.mx[2])}, низ конька ${Math.round(T.top - T.roof.pack)}`);
+        // низ — свая ниже промерзания, а не «свая в данных»
+        const pl = pick(/^plot\.temp\.pile/);
+        if (pl.n !== T.piles.length) errs.push(`свай времянки в модели ${pl.n}, по расчёту ${T.piles.length}`);
+        else if (!near(pl.mn[2], T.pileBottom)) errs.push(`низ свай времянки ${Math.round(pl.mn[2])}, по расчёту ${T.pileBottom}`);
+        // терраса: настил, стойки и ступени — то, чего у коробки не было
+        for (const [re, name, n] of [[/^plot\.temp\.deck$/, 'настила террасы', 1],
+        [/^plot\.temp\.post/, 'стоек террасы', T.posts.length],
+        [/^plot\.temp\.step/, 'ступеней крыльца', T.steps.length],
+        [/^plot\.temp\.rail/, 'ограждения террасы', T.rails.length],
+        [/^plot\.temp\.screen/, 'экранов террасы', T.screens.length],
+        [/^plot\.temp\.skirt/, 'забирки подполья', T.skirt.length]]) {
+          const q = pick(re);
+          if (q.n !== n) errs.push(`${name} времянки в модели ${q.n}, по расчёту ${n}`);
+        }
       }
     }
   }

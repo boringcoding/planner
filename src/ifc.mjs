@@ -264,11 +264,14 @@ export function ifc(house, systems = [], opt = {}) {
   // Стена задаётся осью и толщиной: так её принимают как стену, а не как
   // произвольное тело. Прямоугольник из данных раскладывается на ось
   // по длинной стороне и толщину по короткой.
-  const wallOf = (storey, key, name, rect, hz, kind) => {
+  // z0 — отметка низа стены в осях этажа. Дому он всегда ноль, а времянка
+  // стоит на сваях: её пол выше отметки этажа, и стена с нулём приезжает
+  // в землю вместе со всеми своими проёмами
+  const wallOf = (storey, key, name, rect, hz, kind, z0 = 0) => {
     const horiz = rect.w >= rect.h;
     const len = horiz ? rect.w : rect.h, th = horiz ? rect.h : rect.w;
     const cx = rect.x + rect.w / 2, cy = Y(rect.y + rect.h / 2);
-    const pl = place(storey.pl, cx, cy, 0, horiz ? [1, 0] : [0, 1]);
+    const pl = place(storey.pl, cx, cy, z0, horiz ? [1, 0] : [0, 1]);
     const body = E('IFCSHAPEREPRESENTATION', [sub, str('Body'), str('SweptSolid'), L([paint(boxSolid(len, th, hz), 'wall')])]);
     const axis = E('IFCSHAPEREPRESENTATION', [subAxis, str('Axis'), str('Curve2D'), L([
       E('IFCPOLYLINE', [L([
@@ -870,47 +873,120 @@ export function ifc(house, systems = [], opt = {}) {
       put(s0.st, el);
       matOf('Железобетон', el);
     }
-    // времянка: плита, четыре стены с проёмами, плоская кровля и крыльцо
+    // Времянка. Раньше это была коробка: плита, четыре стены, плоская плита
+    // сверху и крыльцо — шесть тел. Теперь здесь настоящий дом архитектора:
+    // сваи, ростверк, перекрытие, четыре стены с фронтонами, перегородки под
+    // скатом, два ската со свесом, терраса со стойками, ограждением
+    // и ступенями. Метка у всего одна — plot.temp*: по ней смотрелка
+    // и проверка собирают слой «Времянка», и правятся они парой
     if (tempStorey) {
-      const T = PG.temp, tw = T.t;
-      const slab = E('IFCSLAB', [G('temp:slab'), owner, str('Плита времянки'), '$', '$',
-        place(tempStorey.pl, T.x + T.w / 2, Y(T.y + T.h / 2), -T.slabTh),
-        bodyOf([paint(boxSolid(T.w, T.h, T.slabTh), 'slab')]), str(`${T.id}.slab`), '.BASESLAB.']);
-      put(tempStorey.st, slab);
-      matOf('Железобетон', slab);
-      const roof = E('IFCSLAB', [G('temp:roof'), owner, str('Кровля времянки'), '$', '$',
-        place(tempStorey.pl, T.x + T.w / 2, Y(T.y + T.h / 2), T.roofZ),
-        bodyOf([paint(boxSolid(T.w, T.h, T.roofTh), 'roof')]), str(`${T.id}.roof`), '.ROOF.']);
-      put(tempStorey.st, roof);
-      matOf('Плоская кровля, мембрана', roof);
-      const porch = E('IFCSLAB', [G('temp:porch'), owner, str('Крыльцо времянки'), '$', '$',
-        place(tempStorey.pl, T.porch.x + T.porch.w / 2, Y(T.porch.y + T.porch.h / 2), T.porch.top - T.porch.th),
-        bodyOf([paint(boxSolid(T.porch.w, T.porch.h, T.porch.th), 'stone')]), str(T.porch.id), '.LANDING.']);
-      put(tempStorey.st, porch);
-      matOf('Железобетон', porch);
+      const T = PG.temp, tw = T.t, tb = tempStorey.lv.base;
+      const box = (key, cls, name, q, z0, dz, kind, mat, pd) => {
+        const el = E(cls, [G(`temp:${key}`), owner, str(name), '$', '$',
+          place(tempStorey.pl, q.x + q.w / 2, Y(q.y + q.h / 2), z0 - tb),
+          bodyOf([paint(boxSolid(q.w, q.h, dz), pd)]), str(q.id), kind]);
+        put(tempStorey.st, el);
+        matOf(mat, el);
+        return el;
+      };
+      // фундамент: свая ниже промерзания, по сваям ростверк из бруса
+      const ps = (T.pile || {}).s ?? 150;
+      for (const q of T.piles)
+        box(q.id, 'IFCPILE', 'Свая времянки', q, q.z0, q.z1 - q.z0, '.COHESION.',
+          `Железобетон, свая ${ps}×${ps}`, 'stone');
+      const beamS = (T.pile || {}).beam ?? 150;
+      for (const q of T.grill)
+        box(q.id, 'IFCBEAM', 'Ростверк времянки', q, q.z0, q.z1 - q.z0, '.BEAM.', `Брус ${beamS}×${beamS}`, 'wood');
+      // перекрытие пола блока и настил открытой террасы
+      box('floor', 'IFCSLAB', 'Перекрытие пола времянки',
+        { ...T.block, id: `${T.id}.floor` }, T.grillTop, T.floor - T.grillTop, '.FLOOR.', 'Дерево, каркас', 'wood');
+      box('deck', 'IFCSLAB', 'Настил террасы времянки',
+        T.deck, T.deckTop - T.board, T.board, '.FLOOR.', 'Доска террасная', 'wood');
+      for (const q of T.steps)
+        box(q.id, 'IFCSLAB', 'Ступень крыльца времянки', q, q.top - 60, 60, '.LANDING.', 'Доска террасная', 'wood');
+      for (const q of T.rails)
+        box(q.id, 'IFCRAILING', 'Ограждение террасы времянки', q, T.deckTop, q.hz, '.BALUSTRADE.', 'Дерево', 'wood');
+      for (const q of T.screens)
+        box(q.id, 'IFCRAILING', 'Экран террасы времянки', q, q.z0, q.z1 - q.z0, '.BALUSTRADE.', 'Доска, рейка', 'wood');
+      const po = T.post || {};
+      for (const q of T.posts)
+        box(q.id, 'IFCCOLUMN', 'Стойка террасы времянки', q, q.z0, q.z1 - q.z0, '.COLUMN.',
+          `Брус ${po.w ?? 145}×${po.d ?? 90}`, 'wood');
+      const sk = (T.pile || {}).skirt || {};
+      for (const q of T.skirt)
+        box(q.id, 'IFCPLATE', 'Забирка подполья времянки', q, q.z0, q.z1 - q.z0, '.SHEET.',
+          `Доска ${sk.th ?? 45}×${sk.board ?? 50}`, 'wood');
+
+      // Стены и перегородки. Под скатом потолка нет, поэтому верх стены —
+      // не одно число: карнизная кончается на своей отметке, перегородка
+      // поперёк дома повторяет профиль ската. Плоская крышка перегородки
+      // оставила бы щель до кровли на всю длину — ту самую, из-за которой
+      // у дома появился фризовый пояс
       const tws = [];
       for (const wl of T.walls) {
-        const w = wallOf(tempStorey, wl.id, 'Стена времянки', wl, T.clear ?? 2700, 'bearing');
-        w.side = wl.id.slice(-1);
+        const w = wallOf(tempStorey, wl.id, 'Стена времянки', wl, T.clear, 'bearing', T.floor - tb);
+        w.side = wl.side;
         tws.push(w);
-        addProps(w.el, `wall:${wl.id}`, [['id', wl.id], ['kind', 'shell']]);
+        addProps(w.el, `wall:${wl.id}`, [['id', wl.id], ['kind', 'shell'], ['mat', T.mat]]);
       }
-      const tOpen = [{ ...T.door, kind: 'door', sill: 0 }, ...(T.windows || [])];
-      for (const w of tOpen) {
+      const tps = [];
+      for (const q of T.parts) {
+        const w = wallOf(tempStorey, q.id, 'Перегородка времянки', q, q.hz, 'part', T.floor - tb);
+        tps.push(w);
+        addProps(w.el, `wall:${q.id}`, [['id', q.id], ['kind', 'part']]);
+        // над поперечной перегородкой остаётся клин до низа ската: без него
+        // щель на всю длину дома, видимая только в 3D
+        if (!q.wedge) continue;
+        const pl = placeAx(tempStorey.pl, [q.x, Y(q.y), T.floor + q.hz - tb], [0, -1, 0], [1, 0, 0]);
+        const el = E('IFCWALL', [G(`temp:${q.id}.up`), owner, str('Перегородка времянки, клин'), '$', '$', pl,
+          bodyOf([paint(polySolid(q.wedge, q.h), 'wall')]), str(`${q.id}.up`), '.PARTITIONING.']);
+        put(tempStorey.st, el);
+        matOf('Дерево, каркас', el);
+      }
+      // фронтоны: торцы между верхом карнизных стен и низом ската
+      for (const g of T.gables) {
+        const pl = placeAx(tempStorey.pl, [T.x, Y(g.y), g.z - tb], [0, -1, 0], [1, 0, 0]);
+        const el = E('IFCWALL', [G(`temp:${g.id}`), owner, str(`Фронтон времянки ${g.side}`), '$', '$', pl,
+          bodyOf([paint(polySolid(g.prof, g.th), 'wall')]), str(g.id), '.SOLIDWALL.']);
+        put(tempStorey.st, el);
+        matOf('Дерево, каркас', el);
+        addProps(el, `gable:${g.id}`, [['id', g.id], ['area', (T.gableArea / 2).toFixed(2)]]);
+      }
+      // скаты: призма сечением поперёк конька, выдавленная вдоль него
+      for (const s of T.roof.slopes) {
+        const pl = placeAx(tempStorey.pl, [T.x, Y(T.y - T.roof.over), T.floor - tb], [0, -1, 0], [1, 0, 0]);
+        const el = E('IFCSLAB', [G(`temp:${s.id}`), owner, str('Скат кровли времянки'), '$', '$', pl,
+          bodyOf([paint(polySolid(s.prof, T.roof.len), 'roof')]), str(s.id), '.ROOF.']);
+        put(tempStorey.st, el);
+        matOf(T.roof.mat, el);
+        addProps(el, `slope:${s.id}`, [['id', s.id], ['pitch', T.roof.pitch], ['ridge', Math.round(T.roof.ridgeZ)]]);
+      }
+
+      // ---- проёмы времянки -------------------------------------------------
+      for (const w of T.openings) {
         const host = tws.find(x => x.side === w.side);
         if (!host) continue;
         const width = w.b - w.a, c = (w.a + w.b) / 2;
         const wx = w.side === 'W' ? T.x + tw / 2 : w.side === 'E' ? T.x + T.w - tw / 2 : c;
-        const wy = w.side === 'S' ? Y(T.y + tw / 2) : w.side === 'N' ? Y(T.y + T.h - tw / 2) : Y(c);
+        const wy = w.side === 'S' ? Y(T.block.y + tw / 2) : w.side === 'N' ? Y(T.block.y + T.block.h - tw / 2) : Y(c);
         const op = openingIn(host, w.id, wx, wy, width, w.sill || 0, w.hz);
-        const el = fill(tempStorey, op, w.id, w.kind || 'window',
+        const el = fill(tempStorey, op, w.id, w.kind,
           w.kind === 'door' ? 'Наружная дверь' : 'Окно', width, w.hz, host.th - 60);
         addStd(el, `${w.kind === 'door' ? 'door' : 'win'}:${w.id}`,
           w.kind === 'door' ? 'Pset_DoorCommon' : 'Pset_WindowCommon', [
             ['Reference', `IFCIDENTIFIER(${str(w.id)})`],
             ['IsExternal', 'IFCBOOLEAN(.T.)']
           ]);
-        addProps(op.op, `op:${w.id}`, [['id', w.id], ['kind', w.kind || 'window'], ['sill', w.sill || 0]]);
+        addProps(op.op, `op:${w.id}`, [['id', w.id], ['kind', w.kind],
+        ['sill', w.sill || 0], ...(w.pano ? [['pano', 'да']] : [])]);
+      }
+      for (const d of T.doors) {
+        const host = tps[T.parts.findIndex(p => p.id === d.part)];
+        if (!host) continue;
+        const width = d.b - d.a, c = (d.a + d.b) / 2;
+        const op = openingIn(host, d.id, d.horiz ? c : d.at, Y(d.horiz ? d.at : c), width, 0, d.hz);
+        fill(tempStorey, op, d.id, 'door', 'Дверь времянки', width, d.hz, host.th - 60);
+        addProps(op.op, `op:${d.id}`, [['id', d.id], ['kind', 'door'], ['part', d.part]]);
       }
     }
   }
