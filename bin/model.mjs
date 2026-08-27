@@ -327,7 +327,14 @@ if (house.roof) {
         else if (!near(w.mn[0], T.block.x) || !near(w.mx[0], T.block.x + T.block.w)
           || !near(py0(w), T.block.y) || !near(py1(w), T.block.y + T.block.h))
           errs.push(`блок времянки стоит в ${Math.round(w.mn[0])}…${Math.round(w.mx[0])} × ${Math.round(py0(w))}…${Math.round(py1(w))}, по генплану ${T.block.x}…${T.block.x + T.block.w} × ${T.block.y}…${T.block.y + T.block.h}`);
-        else if (!near(w.mx[2], T.wallTop)) errs.push(`верх карнизных стен времянки ${Math.round(w.mx[2])}, по расчёту ${Math.round(T.wallTop)}`);
+        // карнизная стена кончается прямой частью, клин над ней достаёт
+        // до низа ската у внутренней грани — щели между ними быть не может
+        const ew = pick(/^plot\.temp\.wW$|^plot\.temp\.wE$/), cap = pick(/^plot\.temp\.w[WE]\.up$/);
+        if (ew.n && !near(ew.mx[2], T.floor + T.wallBox))
+          errs.push(`верх карнизных стен времянки ${Math.round(ew.mx[2])}, по расчёту ${Math.round(T.floor + T.wallBox)}`);
+        if (cap.n !== 2) errs.push(`клиньев над карнизными стенами времянки ${cap.n}, а не 2`);
+        else if (!near(cap.mn[2], T.floor + T.wallBox) || !near(cap.mx[2], T.wallTop))
+          errs.push(`клин над карнизной стеной ${Math.round(cap.mn[2])}…${Math.round(cap.mx[2])}, по расчёту ${Math.round(T.floor + T.wallBox)}…${Math.round(T.wallTop)}`);
         // скаты: свес по кругу и конёк на своей отметке
         const r = pick(/^plot\.temp\.slope/);
         if (r.n !== 2) errs.push(`скатов кровли времянки в модели ${r.n}, а не 2`);
@@ -340,12 +347,25 @@ if (house.roof) {
             ['югу', T.box.y - py0(r), T.roof.over], ['северу', py1(r) - (T.box.y + T.box.h), T.roof.over]])
             if (!near(got, want)) errs.push(`свес кровли времянки по ${name} ${Math.round(got)}, по данным ${want}`);
         }
-        // фронтон обязан дойти до низа конька: щели на торце по габариту
-        // всей времянки не видно — её закрывают скаты
-        const gb = pick(/^plot\.temp\.gable/);
-        if (gb.n !== 2) errs.push(`фронтонов времянки в модели ${gb.n}, а не 2`);
+        // Фронтон лежит в теле щипцовой стены, и меряется по ней: он обязан
+        // дойти до низа конька, иначе на торце открытый треугольник.
+        // Отдельным телом его выпускать нельзя — тогда проём режет только
+        // нижнюю коробку, а верх витража остаётся в глухом
+        const gb = pick(/^plot\.temp\.w[SN]$/);
+        if (gb.n !== 2) errs.push(`щипцовых стен времянки в модели ${gb.n}, а не 2`);
         else if (!near(gb.mx[2], T.top - T.roof.pack, 6))
-          errs.push(`верх фронтонов времянки ${Math.round(gb.mx[2])}, низ конька ${Math.round(T.top - T.roof.pack)}`);
+          errs.push(`верх щипцовых стен времянки ${Math.round(gb.mx[2])}, низ конька ${Math.round(T.top - T.roof.pack)}`);
+        // и каждый проём щипцовой стены вычтен из неё целиком, а не по пояс
+        for (const o of T.openings) {
+          if (o.side !== 'S' && o.side !== 'N') continue;
+          const q = pick(new RegExp(`^${o.id}$`));
+          if (!q.n) { errs.push(`заполнения ${o.id} в модели нет`); continue; }
+          const need = T.floor + (o.sill || 0) + o.hz;
+          if (q.mx[2] > gb.mx[2] + 1)
+            errs.push(`${o.id} верхом на ${Math.round(q.mx[2])} выше щипцовой стены ${Math.round(gb.mx[2])}`);
+          if (Math.abs(q.mx[2] - (need - 20)) > 2)
+            errs.push(`${o.id} верхом на ${Math.round(q.mx[2])}, по данным ${need - 20}`);
+        }
         // низ — свая ниже промерзания, а не «свая в данных»
         const pl = pick(/^plot\.temp\.pile/);
         if (pl.n !== T.piles.length) errs.push(`свай времянки в модели ${pl.n}, по расчёту ${T.piles.length}`);

@@ -43,11 +43,21 @@ export function tempGeom(house) {
   // к коньку. Верх покрытия выше на толщину пирога. Обе отметки нужны
   // в трёх местах — стойкам, фронтонам и проверке модели, — и считаются
   // одной формулой, чтобы не разойтись
-  const underAt = u => floor + clear + (half - Math.abs(u - half)) * tan;
+  // clear — высота в свету, то есть отметка НА ВНУТРЕННЕЙ грани стены,
+  // а не на наружной. Разница в толщину стены по уклону: 245 · tg15° = 66 мм,
+  // и первая версия теряла их, отсчитывая плоскость от наружной грани. Верх
+  // покрытия при этом сходился с моделью архитектора до полуметра миллиметра
+  // (pack был подобран как разница), а низ уходил на 66 вверх — вдоль обеих
+  // карнизных стен оставался клин пустоты на все 6120 мм, стропила не
+  // опирались ни на что, и конёк по низу выходил 3596 вместо 3530.
+  // Проверяется тремя точками исходника: 2443 на наружной грани, 2509
+  // на внутренней, 3530 на коньке
+  const underAt = u => floor + clear + (half - Math.abs(u - half) - t) * tan;
   const topAt = u => underAt(u) + pack;
   const ridgeZ = topAt(half);                       // верх конька
   const eaveZ = topAt(-over);                       // верх покрытия на кромке свеса
-  const wallTop = floor + clear;                    // верх карнизных стен
+  const wallTop = floor + clear;                    // высота в свету у внутренней грани
+  const wallBox = clear - t * tan;                  // прямая часть стены, выше неё клин
 
   // ---- оболочка ----------------------------------------------------------
   // Отапливаемый блок стоит в дальней от улицы части габарита, ближнюю
@@ -55,29 +65,44 @@ export function tempGeom(house) {
   const dh = D.h ?? 2945;                           // глубина открытой части
   const block = { x: T.x, y: Y(dh), w: T.w, h: T.h - dh };
   const inner = { x: T.x + t, y: block.y + t, w: T.w - 2 * t, h: block.h - 2 * t };
-  const walls = [
-    { ...rect(`${T.id}.wS`, 0, dh, T.w, t), side: 'S' },
-    { ...rect(`${T.id}.wN`, 0, T.h - t, T.w, t), side: 'N' },
-    { ...rect(`${T.id}.wW`, 0, dh + t, t, block.h - 2 * t), side: 'W' },
-    { ...rect(`${T.id}.wE`, T.w - t, dh + t, t, block.h - 2 * t), side: 'E' }
+  const wallRects = [
+    ['S', 0, dh, T.w, t], ['N', 0, T.h - t, T.w, t],
+    ['W', 0, dh + t, t, block.h - 2 * t], ['E', T.w - t, dh + t, t, block.h - 2 * t]
   ];
-  // Перегородка стоит под скатом, и её верх — не одно число. Вдоль конька
-  // потолок над ней ровный, поперёк — поднимается: прямоугольная крышка
-  // оставила бы щель до кровли на всю длину дома, ту самую, из-за которой
-  // у дома появился фризовый пояс. Высота и клин над ней считаются здесь,
-  // чтобы выгрузка и её счётчик брали их из одного места
+  // Никакая стена под скатом не кончается одной отметкой: низ кровли зависит
+  // от x, и меняется он и вдоль стены, и поперёк её толщины. Поэтому у каждой
+  // стены и перегородки прямая часть высотой до самой низкой точки над ней,
+  // а выше — клин по скату. Профиль клина лежит в x и выдавливается по y,
+  // и потому годится обеим ориентациям: продольной перегородке он даёт
+  // скос поперёк толщины, поперечной — конёк посередине. Плоская крышка
+  // оставляла бы щель до кровли — ту самую, из-за которой у дома появился
+  // фризовый пояс, и её не видно ни на одном плане
+  const un = u => Math.round(underAt(u) - floor);
+  const capOf = (x0, x1) => {
+    const hz = Math.min(un(x0 - T.x), un(x1 - T.x));
+    const pts = [[0, 0], [0, un(x0 - T.x) - hz],
+    ...(x0 - T.x < half && half < x1 - T.x ? [[half - (x0 - T.x), un(half) - hz]] : []),
+    [x1 - x0, un(x1 - T.x) - hz], [x1 - x0, 0]];
+    const prof = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+    return { hz, wedge: prof.some(p => p[1] > 1) ? prof : null };
+  };
   const parts = (T.parts || []).map(q => {
     const r = rect(q.id, q.x, q.y, q.w, q.h);
-    const horiz = q.w >= q.h;
-    const un = u => Math.round(underAt(u) - floor);
-    const [u0, u1] = [q.x, q.x + q.w];
-    r.horiz = horiz;
-    r.hz = horiz ? Math.min(un(u0), un(u1)) : un(q.x + q.w / 2);
-    if (horiz) {
-      const prof = [[0, 0], ...(u0 < half && half < u1 ? [[half - u0, un(half) - r.hz]] : []),
-      [u1 - u0, un(u1) - r.hz], [u1 - u0, 0]];
-      if (prof.some(p => p[1] > 1)) r.wedge = prof;
-    }
+    r.horiz = q.w >= q.h;
+    Object.assign(r, capOf(r.x, r.x + r.w));
+    return r;
+  });
+  // Щипцовая стена — не «стена плюс отдельный фронтон». Первая версия делала
+  // именно так, и витраж 3120 вырезался только из нижней коробки 2509:
+  // верхние 611 мм окна сидели внутри глухого треугольника, потому что
+  // вычитание ставится на элемент, а фронтон был другим элементом.
+  // ArchiCAD показал бы ровно это — светопроём 2509 при объявленных 3120.
+  // Теперь фронтон входит в тело своей стены, и один проём режет оба
+  const gableProf = [[0, 0], [half, Math.round(half * tan)], [T.w, 0]];
+  const walls = wallRects.map(([side, u, v, w, h]) => {
+    const r = { ...rect(`${T.id}.w${side}`, u, v, w, h), side };
+    Object.assign(r, capOf(r.x, r.x + r.w));
+    if (side === 'S' || side === 'N') { r.gable = gableProf; r.wedge = null; }
     return r;
   });
   const rooms = (T.rooms || []).map(q => ({
@@ -110,7 +135,7 @@ export function tempGeom(house) {
   // ---- терраса, ступени, ограждение --------------------------------------
   const din = D.in ?? 54;                           // настил уже габарита стен
   const deckTop = floor - (D.drop ?? 55);
-  const deck = { ...rect(`${T.id}.deck`, din, 0, T.w - 2 * din, dh), top: deckTop };
+  const deck = { ...rect(`${T.id}.deck`, din, 0, T.w - 2 * din, dh), top: deckTop, rail: D.rail };
   // Ступени считаются, а не задаются: перепад от настила до земли делится
   // на подступёнки не выше нормы. Ровно так же считается крыльцо дома —
   // и по той же причине: земля у нас на −300, а не там, где её нарисовали
@@ -140,8 +165,11 @@ export function tempGeom(house) {
   if (sc) for (const [n, u, spec] of [[1, din - sc, SC.west], [2, T.w - din, SC.east]]) {
     const [bw, step] = spec || [145, 150];
     const z1 = Math.round(underAt(u + sc / 2));
-    for (let v = 0, i = 0; v + bw <= dh; v += step, i++)
-      screens.push({ ...rect(`${T.id}.screen${n}.${i + 1}`, u, v, sc, bw), z0: deckTop, z1, side: n });
+    // доски лежат горизонтально стопкой от настила вверх: у архитектора
+    // так, и разница видна сразу — частокол из вертикальных реек читается
+    // забором, а стопка досок с просветом читается ширмой
+    for (let z = deckTop, i = 0; z + bw <= z1; z += step, i++)
+      screens.push({ ...rect(`${T.id}.screen${n}.${i + 1}`, u, 0, sc, dh), z0: z, z1: z + bw, side: n });
   }
   // длина экрана по фасаду — для сметы: досок много, а погонаж один
   const screenLen = sc ? 2 * dh : 0;
@@ -161,7 +189,7 @@ export function tempGeom(house) {
   for (const u of P.cx || []) for (const v of P.cy || [])
     piles.push({
       ...rect(`${T.id}.pile${piles.length + 1}`, u, v, P.s ?? 150, P.s ?? 150),
-      z0: ground - (P.depth ?? 3000), z1: floor - (P.drop ?? 412)
+      z0: ground - (P.depth ?? 3000), z1: floor - (P.drop ?? 412) - (P.beam ?? 150)
     });
   const pileBottom = ground - (P.depth ?? 3000);
   const grillTop = floor - (P.drop ?? 412);
@@ -185,7 +213,7 @@ export function tempGeom(house) {
     const cx = P.cx || [], cy = P.cy || [], s0 = P.s ?? 150, th = SK.th;
     const u0 = cx[0], u1 = cx[cx.length - 1] + s0, v0 = cy[0], v1 = cy[cy.length - 1] + s0;
     const board = SK.board ?? 50, step = SK.step ?? 75;
-    for (let z = ground, i = 0; z + board <= grillBottom; z += step, i++)
+    for (let z = grillTop - board, i = 0; z >= ground; z -= step, i++)
       for (const [n, u, v, w, h] of [
         ['S', u0, v0, u1 - u0, th], ['N', u0, v1 - th, u1 - u0, th],
         ['W', u0, v0 + th, th, v1 - v0 - 2 * th], ['E', u1 - th, v0 + th, th, v1 - v0 - 2 * th]])
@@ -207,11 +235,6 @@ export function tempGeom(house) {
   // ---- кровля ------------------------------------------------------------
   // Тело ската — призма: сечение поперёк конька выдавливается вдоль него
   // на всю длину со свесами. Конёк идёт вдоль y, посередине ширины
-  const prof = [
-    [-over, topAt(-over) - floor], [half, topAt(half) - floor], [T.w + over, topAt(T.w + over) - floor],
-    [T.w + over, topAt(T.w + over) - floor - pack], [half, topAt(half) - floor - pack],
-    [-over, topAt(-over) - floor - pack]
-  ];
   // каждый скат — отдельное тело: так его видно в модели по имени, и так же
   // его меряет проверка. Профиль в осях (поперёк конька, вверх от пола)
   const slopes = [
@@ -225,21 +248,13 @@ export function tempGeom(house) {
     }
   ];
   const roof = {
-    pitch: R.pitch ?? 15, over, pack, tan, mat: R.mat, slopes,
-    ridge: X(half), ridgeZ, eaveZ, wallTop, prof, underAt, topAt,
+    pitch: R.pitch ?? 15, over, pack, mat: R.mat, slopes,
+    ridge: X(half), ridgeZ, eaveZ, underAt,
     box: { x: X(-over), y: Y(-over), w: T.w + 2 * over, h: T.h + 2 * over },
     len: T.h + 2 * over,
     // площадь покрытия по скату, а не в плане: за неё платят
     area: (T.w + 2 * over) / Math.cos((R.pitch ?? 15) * RAD) * (T.h + 2 * over) / 1e6
   };
-  // Фронтон закрывает торец между верхом карнизных стен и низом ската.
-  // Без него под кровлей открытый треугольник на всю ширину — на плане
-  // этого не видно ни при какой раскладке
-  const gableProf = [[0, 0], [half, half * tan], [T.w, 0]];
-  const gables = [
-    { side: 'S', id: `${T.id}.gableS`, y: block.y, prof: gableProf, z: wallTop, th: t },
-    { side: 'N', id: `${T.id}.gableN`, y: block.y + block.h - t, prof: gableProf, z: wallTop, th: t }
-  ];
   const gableArea = half * (half * tan) / 1e6 * 2;
 
   return {
@@ -249,7 +264,7 @@ export function tempGeom(house) {
     door, windows, doors, openings,
     deck, deckTop, board: D.board ?? 28, steps, stepOut, risers, rise: Math.round(rise), rails, screens, screenLen, drop,
     piles, pileBottom, grill, grillTop, grillBottom, posts, skirt, skirtLen,
-    roof, gables, gableArea,
+    roof, gableProf, gableArea, wallBox,
     floor, clear, wallTop, top: ridgeZ,
     area: rooms.reduce((s, r) => s + r.area, 0),
     deckArea: deck.w * deck.h / 1e6
