@@ -1021,11 +1021,13 @@ const plotNotes = (house, g, feeds) => {
     return (Math.hypot(dx, dy) / 1000).toFixed(1).replace('.', ',');
   };
   const hb = { x: 0, y: 0, w: S.w, h: S.h };
+  const m = v => (v / 1000).toFixed(1).replace('.', ',');
   const sewerIn = feeds.find(f => f.id === 'vk.out1');
   const water = feeds.find(f => f.id === 'vk.in2');
   return [
     `участок ${g.lot.w / 1000} × ${g.lot.d / 1000} м, въезд с юго-запада; дом в ${g.m.S / 1000} м от красной линии и ${g.m.W / 1000} м от северо-западной границы`,
-    ...(T ? [`времянка ${T.w / 1000} × ${T.h / 1000} м из блока — в ней живут на время стройки; разрыв до дома ${d2(hb, T.box)} м (несгораемые: норма 6)`] : []),
+    ...(T ? [`времянка ${m(T.w)} × ${m(T.h)} м — каркасный дом на ${T.piles.length} сваях, терраса ${m(T.deck.w)} × ${m(T.deck.h)} под общей кровлей ${T.roof.pitch}°, конёк ${mark(T.top)}`,
+      `разрыв дом — времянка ${d2(hb, T.box)} м при норме 10 м (камень — дерево): отступление, строение временное — 8,1 × 9,6 деревянного дома этот двор не выдерживает ни в одной ориентации`] : []),
     ...(q ? [`канализация — станция биоочистки у въезда: до дома ${d2(hb, q.box)} м, до времянки ${T ? d2(T.box, q.box) : '—'} м, до границы ${((g.lot.x1 - q.x - q.w) / 1000).toFixed(1).replace('.', ',')} м`] : []),
     `станция стоит у уличного забора: обслуживание и откачка ила — с улицы, машина на участок не заезжает; полю фильтрации здесь не встать геометрически`,
     ...(sewerIn ? [`самотёк 2 %: вход в станцию ${mark(sewerIn.pts[sewerIn.pts.length - 1].z)}, очищенная вода — напорным сбросом в кювет улицы`] : []),
@@ -1046,8 +1048,10 @@ export function plotTexts(house, systems) {
   add('bld', 'дом', { t: `дом ${S.w / 1000} × ${(S.h / 1000).toString().replace('.', ',')}`, cx: S.w / 2, baseline: 3600, fs: 340, font: 'sans' });
   if (g.temp) {
     const T = g.temp;
-    add('bld', 'времянка', { t: `времянка ${T.w / 1000} × ${T.h / 1000}`, cx: T.x + T.w / 2, baseline: T.y + T.h / 2 - 100, fs: 320, font: 'sans' });
-    add('bld', 'времянка-роль', { t: 'жильё на время стройки', cx: T.x + T.w / 2, baseline: T.y + T.h / 2 + 360, fs: 220, font: 'mono' });
+    const m1 = v => (v / 1000).toFixed(1).replace('.', ',');
+    add('bld', 'времянка', { t: `времянка ${m1(T.w)} × ${m1(T.h)}`, cx: T.x + T.w / 2, baseline: T.block.y + 900, fs: 320, font: 'sans' });
+    add('bld', 'времянка-роль', { t: `каркас на сваях · ${T.area.toFixed(1).replace('.', ',')} м²`, cx: T.x + T.w / 2, baseline: T.block.y + 1360, fs: 220, font: 'mono' });
+    add('bld', 'времянка-терраса', { t: 'терраса', cx: T.x + T.w / 2, baseline: T.y + T.deck.h / 2 + 80, fs: 240, font: 'mono' });
   }
   if (g.septic)
     add('net', 'септик', { t: 'септик · АУ', cx: g.septic.x + g.septic.w / 2, baseline: g.septic.y + g.septic.h + 450, fs: 240, font: 'mono' });
@@ -1079,13 +1083,17 @@ export function plotLeftTexts(house, systems) {
     { kind: 'stamp', owner: 'заголовок', d: { t: `${house.project.title} · Генплан`, cx: q.x0, baseline: q.y0 - 2350, fs: 420, font: 'sans' } },
     { kind: 'stamp', owner: 'единицы', d: { t: 'размеры в миллиметрах, отметки в метрах', cx: q.x0, baseline: q.y0 - 1900, fs: 240, font: 'mono' } }
   ];
-  plotNotes(house, q.g, feeds).forEach((t, i) =>
+  const notes = plotNotes(house, q.g, feeds);
+  notes.forEach((t, i) =>
     out.push({ kind: 'note', owner: t.slice(0, 24), d: { t: `— ${t}`, cx: q.x0, baseline: q.y1 + 3350 + i * 420, fs: 200, font: 'mono' } }));
-  // легенда сетей: линии на чертеже без неё — просто цветные нитки
+  // легенда сетей: линии на чертеже без неё — просто цветные нитки. Встаёт
+  // под примечаниями, а не на зашитой отметке: добавилась строка — уехала
+  // и легенда, иначе правило на наложение ловит собственную вёрстку
+  const legY = q.y1 + 3350 + notes.length * 420 + 340;
   [['вода', SYS_C.vk], ['канализация самотёком', SYS_C.vk], ['сброс напорный', SYS_C.vk], ['кабель', SYS_C.eom]]
     .forEach(([t], i) => out.push({
       kind: 'legend', owner: t,
-      d: { t, cx: q.x0 + 1050 + (i % 2) * 5200, baseline: q.y1 + 6600 + Math.floor(i / 2) * 480, fs: 210, font: 'mono' }
+      d: { t, cx: q.x0 + 1050 + (i % 2) * 5200, baseline: legY + Math.floor(i / 2) * 480, fs: 210, font: 'mono' }
     }));
   return out;
 }
@@ -1138,26 +1146,48 @@ export function renderPlot(house, systems) {
   for (const p of pitGeom(house))
     s += `<rect x="${p.box.x}" y="${p.box.y}" width="${p.box.w}" height="${p.box.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="45"/>`;
 
-  // времянка: стены с дверью, окнами и крыльцом
+  // Времянка тем же способом, что и дом: контур кровли со свесом и коньком,
+  // под ним настил террасы, блок стен с перегородками и проёмами, ступени.
+  // Раньше здесь был квадрат с четырьмя стенами — и на генплане было
+  // не отличить дом от сарая
   if (g.temp) {
-    const T = g.temp;
-    s += `<rect x="${T.x}" y="${T.y}" width="${T.w}" height="${T.h}" fill="${C.ink}"/>`;
-    s += `<rect x="${T.x + T.t}" y="${T.y + T.t}" width="${T.w - 2 * T.t}" height="${T.h - 2 * T.t}" fill="${C.room}"/>`;
-    const cut = (side, a, b) => side === 'S' ? `<rect x="${a}" y="${T.y - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
-      : side === 'N' ? `<rect x="${a}" y="${T.y + T.h - T.t - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
-        : side === 'W' ? `<rect x="${T.x - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`
-          : `<rect x="${T.x + T.w - T.t - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`;
+    const T = g.temp, B = T.block, rb = T.roof.box;
+    s += `<rect x="${rb.x}" y="${rb.y}" width="${rb.w}" height="${rb.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="70"/>`;
+    // конёк виден только на свесах: под ним лежит план, и сплошная линия
+    // через комнаты читалась бы перегородкой
+    for (const [a, b] of [[rb.y, T.y], [T.y + T.h, rb.y + rb.h]])
+      s += `<line x1="${T.roof.ridge}" y1="${a}" x2="${T.roof.ridge}" y2="${b}" stroke="${C.ink}" stroke-width="90"/>`;
+    s += `<rect x="${T.deck.x}" y="${T.deck.y}" width="${T.deck.w}" height="${T.deck.h}" fill="${C.garage}" stroke="${C.ink35}" stroke-width="45"/>`;
+    for (const st of T.steps)
+      s += `<rect x="${st.x}" y="${st.y}" width="${st.w}" height="${st.h}" fill="none" stroke="${C.ink35}" stroke-width="45"/>`;
+    for (const r of [...T.rails, ...T.screens])
+      s += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${C.ink35}"/>`;
+    for (const p of T.posts)
+      s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${C.ink}"/>`;
+    s += `<rect x="${B.x}" y="${B.y}" width="${B.w}" height="${B.h}" fill="${C.ink}"/>`;
+    s += `<rect x="${T.inner.x}" y="${T.inner.y}" width="${T.inner.w}" height="${T.inner.h}" fill="${C.room}"/>`;
+    for (const p of T.parts)
+      s += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${C.ink}"/>`;
+    const cut = (side, a, b) => side === 'S' ? `<rect x="${a}" y="${B.y - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
+      : side === 'N' ? `<rect x="${a}" y="${B.y + B.h - T.t - 20}" width="${b - a}" height="${T.t + 40}" fill="${C.room}"/>`
+        : side === 'W' ? `<rect x="${B.x - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`
+          : `<rect x="${B.x + B.w - T.t - 20}" y="${a}" width="${T.t + 40}" height="${b - a}" fill="${C.room}"/>`;
     s += cut(T.door.side, T.door.a, T.door.b);
-    for (const w of T.windows || []) {
+    for (const w of T.windows) {
       s += cut(w.side, w.a, w.b);
       const horiz = w.side === 'S' || w.side === 'N';
-      const at = w.side === 'S' ? T.y + T.t / 2 : w.side === 'N' ? T.y + T.h - T.t / 2
-        : w.side === 'W' ? T.x + T.t / 2 : T.x + T.w - T.t / 2;
+      const at = w.side === 'S' ? B.y + T.t / 2 : w.side === 'N' ? B.y + B.h - T.t / 2
+        : w.side === 'W' ? B.x + T.t / 2 : B.x + B.w - T.t / 2;
       s += horiz
         ? `<line x1="${w.a}" y1="${at}" x2="${w.b}" y2="${at}" stroke="${C.ink}" stroke-width="55"/>`
         : `<line x1="${at}" y1="${w.a}" x2="${at}" y2="${w.b}" stroke="${C.ink}" stroke-width="55"/>`;
     }
-    s += `<rect x="${T.porch.x}" y="${T.porch.y}" width="${T.porch.w}" height="${T.porch.h}" fill="${C.room}" stroke="${C.ink}" stroke-width="45"/>`;
+    for (const d of T.doors) {
+      const p = d.host;
+      s += d.horiz
+        ? `<rect x="${d.a}" y="${p.y - 20}" width="${d.b - d.a}" height="${p.h + 40}" fill="${C.room}"/>`
+        : `<rect x="${p.x - 20}" y="${d.a}" width="${p.w + 40}" height="${d.b - d.a}" fill="${C.room}"/>`;
+    }
   }
 
   // сети: те же трассы, что в модели и в смете. Вода сплошная, самотёк

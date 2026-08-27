@@ -4,6 +4,7 @@
 import { labelBoxes, roofLabelBoxes, facadeLabelBoxes, sectionLabelBoxes, FACADE_SIDES, roomBlock, furnText, textBox, stairGeom } from './render.mjs';
 import { roofGeom, flueTop, roofHoles, verandaGeom, pitGeom, porchGeom, outsideBits, plotMargins } from './roof.mjs';
 import { plotGeom } from './plot.mjs';
+import { tempGeom } from './temp.mjs';
 import { tour } from './tour.mjs';
 
 export const LIMITS = {
@@ -81,7 +82,8 @@ export const LIMITS = {
   gateW: 3500,             // въездные ворота: проезд пожарной машины
   wicketW: 1000,           // калитка
   gateAxisSnap: 150,       // ось въезда против оси гаражного фронта
-  lintelMax: 3200          // шире — не перемычка и не монолитный участок, а балка
+  lintelMax: 3200,         // шире — не перемычка и не монолитный участок, а балка
+  tempAir: 200             // продух между землёй и низом ростверка времянки
 };
 
 // шкафы и стеллажи ставят рядами, между рядами нужен проход. Ванна рядом
@@ -1241,12 +1243,30 @@ export function check(house, brief) {
           const lim = side === 'улица' ? LIMITS.redLine : LIMITS.sideSetback;
           if (v < lim) errs.push(`времянка в ${Math.round(v)} от границы ${side}, норма ${lim}`);
         }
-        // 38б. противопожарный разрыв: оба дома несгораемые — 6 м, деревянная
-        // времянка потребовала бы 10, и на этом участке ей физически не встать
+        // 38б. Противопожарный разрыв. Двум несгораемым домам нужно 6 м,
+        // камню против дерева — 10. Присланный архитектором каркасный дом
+        // 8,1 × 9,6 не выдерживает десяти ни в одной ориентации: двор
+        // за домом 17,5 м, отступ от задней границы 3 м, и остаток —
+        // 4,9 м как есть, 6,4 м при повороте на 90°. Разрыв принят
+        // отступлением, потому что строение временное; в данных это
+        // записано ролью и текстом отступления, а не молчанием.
+        //
+        // Но отступление не отменяет правила, а меняет его вопрос: раз
+        // норму не выдержать, обязан быть выдержан максимум, который
+        // участок вообще позволяет. Подвинули времянку к дому, хотя место
+        // сзади было, — правило скажет об этом
         const need = temp.mat === 'wood' ? LIMITS.fireGapWood : LIMITS.fireGapStone;
         const gap = dist(houseBox, t);
-        if (gap < need)
-          errs.push(`противопожарный разрыв дом — времянка ${Math.round(gap)}, материалам (${temp.mat === 'wood' ? 'камень — дерево' : 'камень — камень'}) нужно ${need}`);
+        const far = { ...t, y: lot.y1 - LIMITS.sideSetback - t.h };   // самая дальняя посадка
+        const best = Math.min(need, Math.round(dist(houseBox, far)));
+        const mat = temp.mat === 'wood' ? 'камень — дерево' : 'камень — камень';
+        if (temp.role === 'temporary') {
+          if (!temp.waiver)
+            errs.push('времянка помечена временной, а отступление по разрыву не записано');
+          if (gap < best)
+            errs.push(`противопожарный разрыв дом — времянка ${Math.round(gap)}, а участок даёт ${best}: отступление не оправдывает потерянных метров`);
+        } else if (gap < need)
+          errs.push(`противопожарный разрыв дом — времянка ${Math.round(gap)}, материалам (${mat}) нужно ${need}`);
         // дверь времянки обращена к дому и дорожке, а не в забор
         if (!['S', 'W'].includes(temp.door.side))
           errs.push(`дверь времянки выходит на сторону ${temp.door.side} — к забору, а не к дому`);
@@ -1321,6 +1341,114 @@ export function check(house, brief) {
         if (drive.y > lot.y0 + 1 || Math.min(gb, drive.x + drive.w) - Math.max(ga, drive.x) < LIMITS.gateW - 200)
           errs.push('проезд не примыкает к въездным воротам во всю их ширину');
       }
+    }
+  }
+
+  // 42. Времянка. Пока она была коробкой 8 × 8 с плоской плитой сверху,
+  // спрашивать о ней было нечего: четыре стены, дверь и два окна. Присланная
+  // архитектором моделью, она стала домом — с планировкой, скатом над головой,
+  // свайным полем и настилом на высоте почти метра. Всё это проверяется теми
+  // же вопросами, что и дом: покрывают ли помещения внутренний габарит,
+  // лежит ли проём в своей стене, дойти ли от входа до каждой комнаты,
+  // хватает ли высоты под скатом, ниже ли промерзания свая и не сходят ли
+  // с настила в пустоту. Список координат на все эти вопросы не отвечает
+  {
+    const T = tempGeom(house);
+    if (T) {
+      const E2 = m => errs.push(`времянка: ${m}`);
+      // 42а. помещения и перегородки покрывают внутренний габарит
+      const tile = tiling(T.inner, T.rooms, T.parts);
+      for (const c of tile.free.slice(0, 3))
+        E2(`пол ${c.w} × ${c.h} мм у ${c.x},${c.y} не принадлежит ни одному помещению`);
+      for (const o of tile.over.slice(0, 3))
+        E2(`«${o.room.name}» налезает на перегородку у ${o.cell.x},${o.cell.y}`);
+      for (let i = 0; i < T.rooms.length; i++)
+        for (let j = i + 1; j < T.rooms.length; j++)
+          if (overlap(T.rooms[i], T.rooms[j]) > 100)
+            E2(`наложение «${T.rooms[i].name}» и «${T.rooms[j].name}»`);
+
+      // 42б. наружный проём лежит в своей стене и не режет угол
+      for (const o of T.openings) {
+        const w = T.walls.find(q => q.side === o.side);
+        if (!w) { E2(`проём ${o.id} на стороне ${o.side}, а такой стены нет`); continue; }
+        const horiz = o.side === 'S' || o.side === 'N';
+        const [lo, hi] = horiz ? [w.x, w.x + w.w] : [w.y, w.y + w.h];
+        if (o.a < lo + LIMITS.jambMin || o.b > hi - LIMITS.jambMin)
+          E2(`проём ${o.id} ${o.a}…${o.b} не оставляет простенка ${LIMITS.jambMin} в стене ${lo}…${hi}`);
+        // потолок над проёмом: у карнизной стены он ровный, у щипцовой
+        // поднимается к коньку — витраж в пол упирается именно в скат
+        const at = u => Math.round(T.roof.underAt(u - T.x) - T.floor);
+        const lim = horiz ? Math.min(at(o.a), at(o.b)) : T.clear;
+        if (o.hz + (o.sill || 0) > lim)
+          E2(`проём ${o.id} верхом на ${o.hz + (o.sill || 0)}, а низ кровли над ним ${lim}`);
+      }
+      for (const d of T.doors) {
+        const p = T.parts.find(q => q.id === d.part);
+        if (!p) { E2(`дверь ${d.id} привязана к перегородке ${d.part}, а такой нет`); continue; }
+        const [lo, hi] = d.horiz ? [p.x, p.x + p.w] : [p.y, p.y + p.h];
+        if (d.a < lo || d.b > hi) E2(`дверь ${d.id} ${d.a}…${d.b} выходит за перегородку ${lo}…${hi}`);
+      }
+
+      // 42в. от входа достижимо каждое помещение: дверь связывает те два,
+      // к которым примыкает. Комната, в которую не войти, на плане выглядит
+      // ровно так же, как остальные
+      const adj = T.rooms.map(() => new Set());
+      const link = (r, name) => {
+        const hit = T.rooms.map((q, i) => overlap(r, q) > 1000 ? i : -1).filter(i => i >= 0);
+        if (hit.length !== 2) E2(`дверь ${name} соединяет ${hit.length} помещений`);
+        for (const a of hit) for (const b of hit) if (a !== b) adj[a].add(b);
+        return hit;
+      };
+      for (const d of T.doors)
+        link(d.horiz ? rect(d.a, d.host.y - 150, d.b - d.a, d.host.h + 300)
+          : rect(d.host.x - 150, d.a, d.host.w + 300, d.b - d.a), d.id);
+      const entry = T.rooms.findIndex(q => overlap(
+        rect(T.door.a, T.block.y - 150, T.door.b - T.door.a, T.t + 300), q) > 1000);
+      if (entry < 0) E2('входная дверь не ведёт ни в одно помещение');
+      else {
+        const seen = new Set([entry]), st = [entry];
+        while (st.length) for (const n of adj[st.pop()]) if (!seen.has(n)) { seen.add(n); st.push(n); }
+        T.rooms.forEach((q, i) => { if (!seen.has(i)) E2(`в «${q.name}» не войти от входной двери`); });
+      }
+
+      // 42г. Высота под скатом. Это не норма жилого дома — времянку ею
+      // мерить незачем, — а вопрос про голову: у карнизной стены потолок
+      // самый низкий, и под ним надо проходить не пригибаясь. Из данных
+      // это не видно ни в каком виде: там стоит одно число clear
+      for (const q of T.rooms) {
+        const at = u => T.roof.underAt(u - T.x) - T.floor;
+        const low = Math.round(Math.min(at(q.x), at(q.x + q.w)));
+        if (low < LIMITS.clearService) E2(`«${q.name}»: под скатом ${low}, пройти можно от ${LIMITS.clearService}`);
+      }
+
+      // 42д. кровля перекрывает террасу и не вылезает за участок: свес
+      // в 500 мм на трёхметровом отступе съедает шестую часть прохода
+      const PGl = plotGeom(house);
+      if (PGl) {
+        const rb = T.roof.box;
+        for (const [name, v] of [['СЗ', rb.x - PGl.lot.x0], ['ЮВ', PGl.lot.x1 - rb.x - rb.w],
+        ['улица', rb.y - PGl.lot.y0], ['СВ', PGl.lot.y1 - rb.y - rb.h]])
+          if (v < 0) E2(`свес кровли вышел за границу ${name} на ${Math.round(-v)}`);
+      }
+      if (Math.abs(overlap(T.roof.box, T.deck) - T.deck.w * T.deck.h) > 1)
+        E2('кровля не перекрывает настил террасы целиком — с неё будет лить на доски');
+
+      // 42е. свая ниже промерзания с коэффициентом на неотапливаемый грунт,
+      // и продух под ростверком: дерево на земле сгниёт за одну зиму
+      const need = T.ground - Math.round((house.site.frost || 0) * 1.1);
+      if (house.site.frost && T.pileBottom > need)
+        E2(`низ сваи ${T.pileBottom}, промерзание ${house.site.frost} требует ${need}`);
+      const air = T.grillBottom - T.ground;
+      if (air < LIMITS.tempAir) E2(`продух под ростверком ${Math.round(air)}, норма ${LIMITS.tempAir}`);
+
+      // 42ж. с настила сходят по ступеням, а не прыгают: подступёнок в норме,
+      // а при перепаде больше нормы кромка ограждается
+      if (T.rise > LIMITS.porchRise[1] || T.rise < LIMITS.porchRise[0])
+        E2(`подступёнок крыльца ${T.rise}, норма ${LIMITS.porchRise[0]}…${LIMITS.porchRise[1]}`);
+      if (T.drop > 600 && !T.rails.length)
+        E2(`настил на ${Math.round(T.drop)} над землёй без ограждения`);
+      for (const r of T.rails)
+        if (r.hz < LIMITS.guardRail) E2(`ограждение настила ${r.hz}, норма ${LIMITS.guardRail}`);
     }
   }
 
